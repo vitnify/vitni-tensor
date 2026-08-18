@@ -51,6 +51,11 @@ use crate::error::{Error, Result};
 const GGUF_MAGIC: [u8; 4] = *b"GGUF";
 const SUPPORTED_VERSIONS: &[u32] = &[2, 3];
 const DEFAULT_ALIGNMENT: u64 = 32;
+/// Smallest a tensor-info record can be on disk: an empty name
+/// (`u64` length + 0 bytes) + `n_dims` (`u32`, may be 0) + type
+/// (`u32`) + offset (`u64`) = 24 bytes. Used to bound the pre-read
+/// capacity reservation against an attacker-inflated tensor count.
+const MIN_TENSOR_INFO_BYTES: u64 = 24;
 
 /// GGUF metadata value type tags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,65 +144,65 @@ impl GgufTensorType {
     /// actual on-disk size (GGUF guarantees it).
     fn bytes_for_numel(self, numel: u64) -> Result<u64> {
         Ok(match self {
-            Self::F32 => numel.checked_mul(4).ok_or(Error::Internal(
+            Self::F32 => numel.checked_mul(4).ok_or(Error::Overflow(
                 "gguf: F32 byte size overflow",
             ))?,
-            Self::F16 => numel.checked_mul(2).ok_or(Error::Internal(
+            Self::F16 => numel.checked_mul(2).ok_or(Error::Overflow(
                 "gguf: F16 byte size overflow",
             ))?,
             Self::Q4_0 => {
                 if numel % 32 != 0 {
-                    return Err(Error::Internal(
+                    return Err(Error::Malformed(
                         "gguf: Q4_0 tensor numel not a multiple of 32",
                     ));
                 }
-                (numel / 32).checked_mul(18).ok_or(Error::Internal(
+                (numel / 32).checked_mul(18).ok_or(Error::Overflow(
                     "gguf: Q4_0 byte size overflow",
                 ))?
             }
             Self::Q8_0 => {
                 if numel % 32 != 0 {
-                    return Err(Error::Internal(
+                    return Err(Error::Malformed(
                         "gguf: Q8_0 tensor numel not a multiple of 32",
                     ));
                 }
-                (numel / 32).checked_mul(34).ok_or(Error::Internal(
+                (numel / 32).checked_mul(34).ok_or(Error::Overflow(
                     "gguf: Q8_0 byte size overflow",
                 ))?
             }
             Self::Q5_0 => {
                 if numel % 32 != 0 {
-                    return Err(Error::Internal(
+                    return Err(Error::Malformed(
                         "gguf: Q5_0 tensor numel not a multiple of 32",
                     ));
                 }
-                (numel / 32).checked_mul(22).ok_or(Error::Internal(
+                (numel / 32).checked_mul(22).ok_or(Error::Overflow(
                     "gguf: Q5_0 byte size overflow",
                 ))?
             }
             Self::Q4_K => {
                 if numel % 256 != 0 {
-                    return Err(Error::Internal(
+                    return Err(Error::Malformed(
                         "gguf: Q4_K tensor numel not a multiple of 256",
                     ));
                 }
-                (numel / 256).checked_mul(144).ok_or(Error::Internal(
+                (numel / 256).checked_mul(144).ok_or(Error::Overflow(
                     "gguf: Q4_K byte size overflow",
                 ))?
             }
             Self::Q6_K => {
                 if numel % 256 != 0 {
-                    return Err(Error::Internal(
+                    return Err(Error::Malformed(
                         "gguf: Q6_K tensor numel not a multiple of 256",
                     ));
                 }
-                (numel / 256).checked_mul(210).ok_or(Error::Internal(
+                (numel / 256).checked_mul(210).ok_or(Error::Overflow(
                     "gguf: Q6_K byte size overflow",
                 ))?
             }
             Self::Other(raw) => {
                 let _ = raw;
-                return Err(Error::Internal(
+                return Err(Error::Malformed(
                     "gguf: byte size unknown for unsupported ggml_type",
                 ));
             }
@@ -268,9 +273,14 @@ pub struct GgufTensor<'a> {
 }
 
 impl GgufTensor<'_> {
-    /// Total element count = product of shape.
+    /// Total element count = product of shape. Saturates rather than
+    /// panicking on overflow: `parse` only admits tensors whose shape
+    /// product fits u64 (see `checked_numel`), so for any tensor that
+    /// came out of a parsed file this is the exact product; the
+    /// saturating fold just keeps a hand-built shape from panicking a
+    /// debug build.
     pub fn numel(&self) -> u64 {
-        self.shape.iter().product()
+        self.shape.iter().fold(1u64, |acc, &d| acc.saturating_mul(d))
     }
 }
 
@@ -298,11 +308,11 @@ impl<'a> GgufFile<'a> {
         // Header.
         let magic = cur.read_n(4)?;
         if magic != GGUF_MAGIC {
-            return Err(Error::Internal("gguf: bad magic (not 'GGUF')"));
+            return Err(Error::Malformed("gguf: bad magic (not 'GGUF')"));
         }
         let version = cur.read_u32()?;
         if !SUPPORTED_VERSIONS.contains(&version) {
-            return Err(Error::Internal(
+            return Err(Error::Malformed(
                 "gguf: unsupported version (only v2/v3 supported)",
             ));
         }
@@ -315,7 +325,7 @@ impl<'a> GgufFile<'a> {
             let key = cur.read_string()?;
             let value_type_raw = cur.read_u32()?;
             let value_type = GgufValueType::from_u32(value_type_raw)
-                .ok_or(Error::Internal("gguf: unknown value type"))?;
+                .ok_or(Error::Malformed("gguf: unknown value type"))?;
             let value = cur.read_value(value_type)?;
             metadata.insert(key, value);
         }
@@ -324,13 +334,22 @@ impl<'a> GgufFile<'a> {
         // Stored back-to-back: each is `name + n_dims + dims[] + type + offset`.
         // After reading all of them we pad to alignment, then the
         // tensor data section begins.
+        // `tensor_count` is attacker-controlled; feeding it straight to
+        // `with_capacity` lets a corrupt file (e.g. u64::MAX) abort the
+        // process on a giant allocation before we read a single record.
+        // Cap the reservation by the fewest bytes a tensor-info record
+        // can occupy (empty name len + n_dims + type + offset = 24). The
+        // loop still reads and validates every record and errors out on
+        // EOF, so an inflated count just yields a `Truncated` error.
+        let remaining = blob.len().saturating_sub(cur.pos) as u64;
+        let cap = core::cmp::min(tensor_count, remaining / MIN_TENSOR_INFO_BYTES + 1) as usize;
         let mut tensor_infos: Vec<(String, Vec<u64>, GgufTensorType, u64)> =
-            Vec::with_capacity(tensor_count as usize);
+            Vec::with_capacity(cap);
         for _ in 0..tensor_count {
             let name = cur.read_string()?;
             let n_dims = cur.read_u32()? as usize;
             if n_dims > 8 {
-                return Err(Error::Internal(
+                return Err(Error::Malformed(
                     "gguf: tensor rank > 8 (sanity bound)",
                 ));
             }
@@ -353,8 +372,17 @@ impl<'a> GgufFile<'a> {
             })
             .unwrap_or(DEFAULT_ALIGNMENT);
 
+        // `alignment` comes straight from `general.alignment`; a zero
+        // would divide-by-zero in `div_ceil` below, and the rounded-up
+        // result is fed to a checked multiply so a huge value can't wrap.
+        if alignment == 0 {
+            return Err(Error::Malformed("gguf: general.alignment is zero"));
+        }
         let unaligned = cur.pos as u64;
-        let aligned = unaligned.div_ceil(alignment) * alignment;
+        let aligned = unaligned
+            .div_ceil(alignment)
+            .checked_mul(alignment)
+            .ok_or(Error::Overflow("gguf: alignment padding overflow"))?;
         cur.pos = aligned as usize;
         let tensor_data_base = cur.pos;
 
@@ -362,16 +390,16 @@ impl<'a> GgufFile<'a> {
         let mut tensors: Vec<GgufTensor<'a>> = Vec::with_capacity(tensor_infos.len());
         let mut by_name = BTreeMap::new();
         for (i, (name, shape, dtype, offset)) in tensor_infos.into_iter().enumerate() {
-            let numel: u64 = shape.iter().product();
+            let numel = checked_numel(&shape)?;
             let nbytes = dtype.bytes_for_numel(numel)?;
             let start = tensor_data_base
                 .checked_add(offset as usize)
-                .ok_or(Error::Internal("gguf: tensor offset overflow"))?;
+                .ok_or(Error::Overflow("gguf: tensor offset overflow"))?;
             let end = start
                 .checked_add(nbytes as usize)
-                .ok_or(Error::Internal("gguf: tensor end overflow"))?;
+                .ok_or(Error::Overflow("gguf: tensor end overflow"))?;
             if end > blob.len() {
-                return Err(Error::Internal(
+                return Err(Error::Truncated(
                     "gguf: tensor extends past end of file",
                 ));
             }
@@ -395,6 +423,8 @@ impl<'a> GgufFile<'a> {
 
     /// Look up a tensor by name. Returns `None` if absent.
     pub fn tensor(&self, name: &str) -> Option<&GgufTensor<'a>> {
+        // invariant: by_name only ever holds indices `parse` produced
+        // from `tensors.len()`, so the index is always in bounds.
         self.by_name.get(name).map(|&i| &self.tensors[i])
     }
 
@@ -402,8 +432,8 @@ impl<'a> GgufFile<'a> {
     pub fn metadata_u32(&self, key: &str) -> Result<u32> {
         match self.metadata.get(key) {
             Some(GgufValue::U32(v)) => Ok(*v),
-            Some(_) => Err(Error::Internal("gguf: metadata is not U32")),
-            None => Err(Error::Internal("gguf: metadata key missing")),
+            Some(_) => Err(Error::Malformed("gguf: metadata is not U32")),
+            None => Err(Error::Malformed("gguf: metadata key missing")),
         }
     }
 
@@ -412,8 +442,8 @@ impl<'a> GgufFile<'a> {
         match self.metadata.get(key) {
             Some(GgufValue::U64(v)) => Ok(*v),
             Some(GgufValue::U32(v)) => Ok(*v as u64),
-            Some(_) => Err(Error::Internal("gguf: metadata is not U64")),
-            None => Err(Error::Internal("gguf: metadata key missing")),
+            Some(_) => Err(Error::Malformed("gguf: metadata is not U64")),
+            None => Err(Error::Malformed("gguf: metadata key missing")),
         }
     }
 
@@ -421,8 +451,8 @@ impl<'a> GgufFile<'a> {
     pub fn metadata_str(&self, key: &str) -> Result<&str> {
         match self.metadata.get(key) {
             Some(GgufValue::String(s)) => Ok(s.as_str()),
-            Some(_) => Err(Error::Internal("gguf: metadata is not String")),
-            None => Err(Error::Internal("gguf: metadata key missing")),
+            Some(_) => Err(Error::Malformed("gguf: metadata is not String")),
+            None => Err(Error::Malformed("gguf: metadata key missing")),
         }
     }
 
@@ -430,6 +460,20 @@ impl<'a> GgufFile<'a> {
     pub fn metadata_value(&self, key: &str) -> Option<&GgufValue> {
         self.metadata.get(key)
     }
+}
+
+/// Product of a tensor's shape dims with overflow checking. Dims are
+/// `u64` straight from the file, so a corrupt shape can name a product
+/// that wraps `u64` (and panics a debug build's `Iterator::product`).
+/// Fold with `checked_mul` so it surfaces as `Error::Overflow` instead.
+fn checked_numel(shape: &[u64]) -> Result<u64> {
+    let mut numel: u64 = 1;
+    for &dim in shape {
+        numel = numel
+            .checked_mul(dim)
+            .ok_or(Error::Overflow("gguf: shape product overflows u64"))?;
+    }
+    Ok(numel)
 }
 
 // ---------------------------------------------------------------
@@ -447,11 +491,11 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_n(&mut self, n: usize) -> Result<&'a [u8]> {
-        let end = self.pos.checked_add(n).ok_or(Error::Internal(
+        let end = self.pos.checked_add(n).ok_or(Error::Overflow(
             "gguf: read past end (overflow)",
         ))?;
         if end > self.buf.len() {
-            return Err(Error::Internal("gguf: read past end"));
+            return Err(Error::Truncated("gguf: read past end"));
         }
         let s = &self.buf[self.pos..end];
         self.pos = end;
@@ -459,11 +503,13 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_u32(&mut self) -> Result<u32> {
+        // invariant: read_n returns exactly 4 bytes or Err, so s[0..4] hold.
         let s = self.read_n(4)?;
         Ok(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
     }
 
     fn read_u64(&mut self) -> Result<u64> {
+        // invariant: read_n returns exactly 8 bytes or Err, so s[0..8] hold.
         let s = self.read_n(8)?;
         Ok(u64::from_le_bytes([s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]]))
     }
@@ -474,11 +520,11 @@ impl<'a> Cursor<'a> {
             // 1 MiB sanity cap on string lengths — keys/values
             // realistically max around 64 KiB; this stops a
             // corrupted file from triggering a huge allocation.
-            return Err(Error::Internal("gguf: string length > 1 MiB"));
+            return Err(Error::Malformed("gguf: string length > 1 MiB"));
         }
         let bytes = self.read_n(n)?;
         let s = core::str::from_utf8(bytes)
-            .map_err(|_| Error::Internal("gguf: non-UTF8 string"))?;
+            .map_err(|_| Error::Malformed("gguf: non-UTF8 string"))?;
         Ok(s.to_owned())
     }
 
@@ -508,9 +554,9 @@ impl<'a> Cursor<'a> {
             GgufValueType::ARRAY => {
                 let elem_type_raw = self.read_u32()?;
                 let elem_type = GgufValueType::from_u32(elem_type_raw)
-                    .ok_or(Error::Internal("gguf: bad array elem type"))?;
+                    .ok_or(Error::Malformed("gguf: bad array elem type"))?;
                 if matches!(elem_type, GgufValueType::ARRAY) {
-                    return Err(Error::Internal(
+                    return Err(Error::Malformed(
                         "gguf: nested arrays not supported",
                     ));
                 }
@@ -523,10 +569,10 @@ impl<'a> Cursor<'a> {
                     for _ in 0..len {
                         let n = self.read_u64()? as usize;
                         self.pos = self.pos.checked_add(n).ok_or(
-                            Error::Internal("gguf: array string overflow"),
+                            Error::Overflow("gguf: array string overflow"),
                         )?;
                         if self.pos > self.buf.len() {
-                            return Err(Error::Internal(
+                            return Err(Error::Truncated(
                                 "gguf: array string past end",
                             ));
                         }
@@ -537,16 +583,20 @@ impl<'a> Cursor<'a> {
                         GgufValueType::UINT16 | GgufValueType::INT16 => 2,
                         GgufValueType::UINT32 | GgufValueType::INT32 | GgufValueType::FLOAT32 => 4,
                         GgufValueType::UINT64 | GgufValueType::INT64 | GgufValueType::FLOAT64 => 8,
-                        _ => unreachable!(),
+                        // STRING is handled above; ARRAY is rejected above.
+                        // Any other tag never reaches here, but return an
+                        // error rather than panic to keep the parser
+                        // panic-free on every input path.
+                        _ => return Err(Error::Malformed("gguf: bad array elem type")),
                     };
                     let total = (len as usize).checked_mul(elem_size).ok_or(
-                        Error::Internal("gguf: array byte total overflow"),
+                        Error::Overflow("gguf: array byte total overflow"),
                     )?;
                     let end = self.pos.checked_add(total).ok_or(
-                        Error::Internal("gguf: array end overflow"),
+                        Error::Overflow("gguf: array end overflow"),
                     )?;
                     if end > self.buf.len() {
-                        return Err(Error::Internal("gguf: array past end of buffer"));
+                        return Err(Error::Truncated("gguf: array past end of buffer"));
                     }
                     self.pos = end;
                 }
@@ -675,7 +725,7 @@ mod tests {
     fn parser_rejects_bad_magic() {
         let buf = b"XXXXversion".to_vec();
         let err = GgufFile::parse(&buf).unwrap_err();
-        assert!(matches!(err, Error::Internal(s) if s.contains("bad magic")));
+        assert!(matches!(err, Error::Malformed(s) if s.contains("bad magic")));
     }
 
     #[test]
@@ -686,14 +736,14 @@ mod tests {
         buf.extend_from_slice(&0u64.to_le_bytes());
         buf.extend_from_slice(&0u64.to_le_bytes());
         let err = GgufFile::parse(&buf).unwrap_err();
-        assert!(matches!(err, Error::Internal(s) if s.contains("unsupported version")));
+        assert!(matches!(err, Error::Malformed(s) if s.contains("unsupported version")));
     }
 
     #[test]
     fn parser_rejects_truncated_header() {
         let buf = b"GGUF\x03\x00\x00".to_vec();
         let err = GgufFile::parse(&buf).unwrap_err();
-        assert!(matches!(err, Error::Internal(s) if s.contains("past end")));
+        assert!(matches!(err, Error::Truncated(s) if s.contains("past end")));
     }
 
     fn write_string(buf: &mut Vec<u8>, s: &str) {

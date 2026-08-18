@@ -48,6 +48,18 @@ pub enum Error {
     /// the structured variants above. Used by ops/quant.rs for
     /// block-alignment + layout sanity checks.
     Internal(&'static str),
+    /// Untrusted input is structurally invalid — bad magic, an unknown
+    /// type tag, a value that violates the format's invariants. Used by
+    /// the GGUF loader (`model/gguf.rs`) on attacker-controlled files.
+    Malformed(&'static str),
+    /// Untrusted input ended before a field could be fully read — a
+    /// truncated header, a length or offset that runs past the end of
+    /// the blob.
+    Truncated(&'static str),
+    /// A size or offset computation over attacker-controlled dimensions
+    /// or offsets overflowed. Guarded with checked arithmetic so it
+    /// surfaces as an error instead of wrapping or panicking.
+    Overflow(&'static str),
 }
 
 impl fmt::Display for Error {
@@ -66,6 +78,9 @@ impl fmt::Display for Error {
             Error::InvalidShape(msg) => write!(f, "invalid shape: {msg}"),
             Error::NotImplemented { op, why } => write!(f, "{op}: not implemented ({why})"),
             Error::Internal(msg) => write!(f, "internal: {msg}"),
+            Error::Malformed(msg) => write!(f, "malformed input: {msg}"),
+            Error::Truncated(msg) => write!(f, "truncated input: {msg}"),
+            Error::Overflow(msg) => write!(f, "overflow: {msg}"),
         }
     }
 }
