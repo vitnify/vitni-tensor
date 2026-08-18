@@ -1,0 +1,48 @@
+[package]
+name = "vitni-tensor"
+version = "0.0.1"
+edition = "2021"
+description = "Deterministic, no_std tensor engine for verifiable, cross-vendor bit-identical LLM inference."
+license = "Apache-2.0"
+
+# Self-contained: depends only on alloc + libm + a hashing library.
+[workspace]
+
+[lib]
+name = "vitni_tensor"
+
+[dependencies]
+# No std. Only alloc + the host runtime (when targeting the host runtime).
+# For host-build sanity checks we use libm directly; on the target runtime we'd
+# take libm via the host runtime.
+libm = { version = "0.2", default-features = false }
+# BLAKE3 for ExCert input/output hashing. no_std-compatible with
+# default-features = false. Same hash the host runtime uses for all CAS + cert
+# operations, so software-computed certs (host tests) and substrate-
+# issued certs (the host runtime) bind to identical bytes.
+blake3 = { version = "1", default-features = false }
+# Host-only work-stealing pool, pulled in by `std-parallel`. Needed because
+# std::thread::scope spawns fresh threads per call: at 32 layers x 7 matrices
+# that is ~3100 thread creations per token, and spawn cost swamped the gain
+# (measured 177% CPU across 14 cores). A persistent pool removes it.
+rayon = { version = "1", optional = true }
+
+[dev-dependencies]
+# Tests use blake3 directly (e.g. to compute a weights_hash on host
+# from a file blob). Same crate as the lib dep — pulling default
+# features here for std-side convenience.
+blake3 = "1"
+
+[features]
+default = []
+# Row-parallel linear layers using std threads. Host-only (the host runtime supplies its
+# own scheduler). Results are BIT-IDENTICAL with or without it: each output
+# row is an independent canonical_dot, so splitting rows across threads
+# cannot touch any reduction order. Verified by test.
+std-parallel = ["dep:rayon"]
+
+# bench_par exercises the threaded linear paths, which only exist under
+# std-parallel. Without this, a default-feature `cargo test` fails to build it.
+[[example]]
+name = "bench_par"
+required-features = ["std-parallel"]
