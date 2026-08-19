@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build & test (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The crate is developed against nightly (edition 2021). No rust-toolchain
+      # file pins a date, so we track the current nightly.
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Unit & determinism tests
+        run: cargo test --release --lib
+
+      # Adversarial GGUF parser tests: malformed/hostile inputs must return Err
+      # without panicking. The model-driven integration tests are #[ignore]d and
+      # need a GGUF checkpoint that is not in CI, so they are intentionally skipped.
+      - name: GGUF fuzz tests
+        run: cargo test --release --test gguf_fuzz

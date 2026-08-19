@@ -54,3 +54,15 @@ Agents*.
 
 Apache-2.0. **"vitnify"** and **"vitnify-verified"** are trademarks — see
 [TRADEMARKS.md](TRADEMARKS.md). A fork may use the code, not the name.
+
+## Part of Vitnify
+
+vitni-tensor is the deterministic engine in a three-repo stack:
+
+- **[vitnify](https://github.com/vitnify/vitnify)** — the Python SDK: capability
+  containment, deterministic replay, and signed execution receipts that embed this
+  engine's digest.
+- **[vitnify-receipt-spec](https://github.com/vitnify/vitnify-receipt-spec)** — the
+  canonical `vitnify-receipt v1` format, including the conformance anchor this engine's
+  digest reproduces.
+- **[vitnify.com](https://vitnify.com)** — the project.
