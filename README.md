@@ -3,10 +3,10 @@
 **Deterministic, `no_std` tensor engine for verifiable LLM inference.** The same
 inputs produce the **same output bits on different CPUs** — across vendors and
 instruction sets — by fixing reduction order in floating point and doing k-quant
-matmuls in exact integers. It runs stock GGUF models and emits a `vitnium-receipt v1`
+matmuls in exact integers. It runs stock GGUF models and emits a `vitnify-receipt v1`
 model-computation digest for every run.
 
-vitni-tensor is the deterministic engine under [vitnium](https://vitnium.com) —
+vitni-tensor is the deterministic engine under [vitnify](https://vitnify.com) —
 execution receipts for AI agents.
 
 ## Why
@@ -22,7 +22,7 @@ path, so a run can be **reproduced bit-for-bit** by an independent party and cer
   optional attention biases; RMSNorm; SwiGLU; KV cache.
 - Quantized matmul kernels: **F32 · Q4_0 · Q4_K · Q5_0 · Q6_K · Q8_0**.
 - Pinned-order fp32 dot + exact-integer k-quant dots; deterministic `libm` transcendentals.
-- A per-run **`vitnium-receipt v1`** model-computation digest (BLAKE3).
+- A per-run **`vitnify-receipt v1`** model-computation digest (BLAKE3).
 
 ## The receipt binary
 
@@ -32,7 +32,7 @@ cargo build --release --bin vitni-receipt
 # -> {"model_digest":"…","weights_hash":"…","tokens":[…]}
 ```
 
-The vitnium SDK calls this to bind the model's computation into a signed execution receipt.
+The vitnify SDK calls this to bind the model's computation into a signed execution receipt.
 
 ## Tests
 
@@ -52,5 +52,5 @@ Agents*.
 
 ## License
 
-Apache-2.0. **"vitnium"** and **"vitnium-verified"** are trademarks — see
+Apache-2.0. **"vitnify"** and **"vitnify-verified"** are trademarks — see
 [TRADEMARKS.md](TRADEMARKS.md). A fork may use the code, not the name.

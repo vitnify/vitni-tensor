@@ -427,13 +427,13 @@ impl CertBuilder {
 
 /// Compute the canonical BLAKE3 binding digest.
 ///
-/// Public receipt format `vitnium-receipt v1`. The digest binds a
+/// Public receipt format `vitnify-receipt v1`. The digest binds a
 /// causal-intervention section appended after activations; absent
 /// sections write single LEB128 zeros, so the digest is well-defined
 /// for every mode combination.
 ///
 /// Format:
-///   "vitnium-receipt v1\x00"
+///   "vitnify-receipt v1\x00"
 ///   LEB128 n_inputs ; n_inputs × (write_field)
 ///   LEB128 n_outputs ; n_outputs × (write_field)
 ///   LEB128 n_ops ; n_ops × (write_op)
@@ -449,7 +449,7 @@ fn compute_digest(
     interventions: &[InterventionRecord],
 ) -> [u8; 32] {
     let mut hasher = ::blake3::Hasher::new();
-    hasher.update(b"vitnium-receipt v1\x00");
+    hasher.update(b"vitnify-receipt v1\x00");
     write_leb128(&mut hasher, inputs.len() as u64);
     for f in inputs {
         write_field(&mut hasher, f);
@@ -662,7 +662,7 @@ mod tests {
     fn known_blake3_for_empty_cert() {
         // Lock down the empty-cert digest so any change to the binding
         // format is immediately visible. Computed by running
-        // BLAKE3("vitnium-receipt v1\x00" || 0x00 × 5) — five LEB128
+        // BLAKE3("vitnify-receipt v1\x00" || 0x00 × 5) — five LEB128
         // zeros for n_inputs=0, n_outputs=0, n_ops=0,
         // n_activations=0, n_interventions=0 (v4 added the
         // interventions section after v3's activations).

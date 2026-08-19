@@ -1,8 +1,8 @@
-//! vitni-receipt — emit a `vitnium-receipt v1` model-computation digest for a run.
+//! vitni-receipt — emit a `vitnify-receipt v1` model-computation digest for a run.
 //!
 //! Given a GGUF model and a prompt (comma-separated token IDs), run the deterministic
 //! engine and print, as JSON, the generated tokens and the model-computation digest.
-//! The vitnium SDK calls this and records the digest into the run's `llm_call` event,
+//! The vitnify SDK calls this and records the digest into the run's `llm_call` event,
 //! so the signed execution receipt binds what the model actually computed.
 //!
 //! Usage: vitni-receipt --gguf PATH --prompt "1,9038,2501" [--n 16]

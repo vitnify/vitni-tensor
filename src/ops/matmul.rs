@@ -97,7 +97,7 @@ pub(crate) fn matmul(lhs: &Tensor, rhs: &Tensor) -> Result<Tensor> {
     // This used to carry its own inline copy of the canonical shape. Two
     // copies of a numerical contract is two things to keep in step, and they
     // did fall out of step: when the quantized path moved to lane-pinned v2
-    // this file was still computing v1, so `vitnium-receipt-verifier`'s regime
+    // this file was still computing v1, so `vitnify-receipt-verifier`'s regime
     // probe (which runs through matmul) certified a regime the GGUF replay
     // path no longer used. Delegating removes the failure mode entirely.
     //

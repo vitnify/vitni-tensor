@@ -24,7 +24,7 @@
 //! A cert is `(inputs, outputs, digest)` where:
 //!
 //!   `digest = BLAKE3(`
-//!     `"vitnium-receipt v1" || 0x00 ||`
+//!     `"vitnify-receipt v1" || 0x00 ||`
 //!     `LEB128(n_inputs)  || for each: LEB128(|name|) || name || LEB128(|bytes|) || bytes ||`
 //!     `LEB128(n_outputs) || for each: same format`
 //!   `)`
