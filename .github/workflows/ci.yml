@@ -11,15 +11,16 @@ concurrency:
 
 jobs:
   test:
-    name: build & test (nightly)
+    name: build & test (stable)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # The crate is developed against nightly (edition 2021). No rust-toolchain
-      # file pins a date, so we track the current nightly.
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+      # The crate uses no nightly features and is published on stable, so CI
+      # runs on stable too. Floating `nightly` was tracking the current compiler
+      # and broke `main` on unrelated upstream codegen churn.
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
