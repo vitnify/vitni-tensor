@@ -100,7 +100,7 @@ fn digest_from_events(events: &[SinkEvent]) -> [u8; 32] {
     }
 
     let mut h = blake3::Hasher::new();
-    h.update(b"vitnium-receipt v1\x00");
+    h.update(b"vitnify-receipt v1\x00");
     write_leb128(&mut h, inputs.len() as u64);
     for (n, b) in &inputs {
         write_leb128(&mut h, n.len() as u64);
