@@ -1,13 +1,13 @@
-vitnium
-Copyright 2026 vitnium
+vitnify
+Copyright 2026 vitnify
 
-This product includes software developed by vitnium (https://vitnium.com).
+This product includes software developed by vitnify (https://vitnify.com).
 
 Portions of this software (the "vitni-tensor" deterministic inference engine and
-the vitnium SDK) are licensed under the Apache License, Version 2.0. See the
+the vitnify SDK) are licensed under the Apache License, Version 2.0. See the
 LICENSE file.
 
-"vitnium" and "vitnium-verified", and the vitnium logo, are trademarks of vitnium.
+"vitnify" and "vitnify-verified", and the vitnify logo, are trademarks of vitnify.
 The Apache-2.0 license does not grant rights to use these marks. See TRADEMARKS.md.
 
 Third-party components used by vitni-tensor include libm (deterministic math) and
