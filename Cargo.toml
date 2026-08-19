@@ -1,9 +1,14 @@
 [package]
 name = "vitni-tensor"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 description = "Deterministic, no_std tensor engine for verifiable, cross-vendor bit-identical LLM inference."
 license = "Apache-2.0"
+repository = "https://github.com/vitnify/vitni-tensor"
+homepage = "https://vitnify.com"
+readme = "README.md"
+keywords = ["llm", "inference", "deterministic", "no-std", "reproducible"]
+categories = ["algorithms", "no-std", "science"]
 
 # Self-contained: depends only on alloc + libm + a hashing library.
 [workspace]

@@ -1,0 +1,27 @@
+name: Publish to crates.io
+
+# Publishes `vitni-tensor` to crates.io when a GitHub Release is published.
+# Auth is a scoped CARGO_REGISTRY_TOKEN repo secret (publish-new + publish-update,
+# limited to this crate). Once the crate exists, this can move to token-free
+# Trusted Publishing (OIDC).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Fail early on a broken manifest before touching the registry.
+      - name: Package (verify build)
+        run: cargo package
+
+      - name: Publish to crates.io
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
