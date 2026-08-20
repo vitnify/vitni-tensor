@@ -32,8 +32,11 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
-      - name: Build (release)
-        run: cargo build --release
+      # --all-targets so examples/benches/tests compile too. A target-scoped build
+      # (plain `cargo build`) misses them, so a broken example can pass CI while
+      # `cargo test` — what a contributor actually types — fails.
+      - name: Build (release, all targets)
+        run: cargo build --release --all-targets
 
       # Lib tests include the pinned reduction/quant hashes; running them on both
       # runners is the cross-ISA bit-identity check.
