@@ -1,5 +1,5 @@
 //! Llama2 forward pass — single-token version with KV cache, mirroring
-//! `the reference implementation`'s `forward()` function exactly.
+//! `the reference`'s `forward()` function exactly.
 //!
 //! The KV cache is held as a raw `Vec<f32>` rather than a vitni-tensor
 //! Tensor because the cache is fundamentally mutable per-position state,
@@ -9,7 +9,7 @@
 //! scratch.
 //!
 //! This is the exact same architectural pattern karpathy uses in
-//! llama2.c and the reference implementation uses today.
+//! llama2.c and the reference uses today.
 
 use super::{config::Config, weights::Weights};
 use crate::{error::Result, storage::Storage, tensor::Tensor, Shape};
@@ -135,7 +135,7 @@ where
         let v = accel.matmul(&xb_2d, &wv_t)?;
 
         // 1c. Store k/v into the cache BEFORE rope (we'll rope k below
-        // in-place on the cached slot, matching the reference implementation order).
+        // in-place on the cached slot, matching the reference order).
         let kv_layer_off = layer * cfg.seq_len * kv_dim + pos * kv_dim;
         let k_data = tensor_as_f32(&k)?;
         let v_data = tensor_as_f32(&v)?;
@@ -143,7 +143,7 @@ where
         state.value_cache[kv_layer_off..kv_layer_off + kv_dim].copy_from_slice(v_data);
 
         // 1d. RoPE on q (full dim) and the just-stored k (kv_dim).
-        // Mirror the reference implementation's per-pair loop exactly so values match.
+        // Mirror the reference's per-pair loop exactly so values match.
         let mut q_buf = tensor_as_f32(&q)?.to_vec();
         let mut i = 0;
         while i < dim {
@@ -190,7 +190,7 @@ where
             }
             // Softmax via the accelerator. Per-head softmax is
             // small (pos+1 elements); a real GPU accel would batch
-            // these. For M6 we dispatch one-by-one, the accel can
+            // these. Here we dispatch one-by-one, the accel can
             // choose CPU fallback for sub-threshold tensors.
             let att_t = Tensor::from_f32(att, Shape::new(&[pos + 1])?)?;
             let probs = accel.softmax_last_dim(&att_t)?;
@@ -279,7 +279,7 @@ where
 // =============================================================================
 // Helpers — small bridges between raw f32 slices and Tensor. These would
 // be unnecessary if Tensor had a borrowed-storage constructor; deferred
-// to M3 v2 for cleanliness.
+//.
 // =============================================================================
 
 fn slice_to_tensor(data: &[f32], dims: &[usize]) -> Result<Tensor> {
@@ -292,7 +292,7 @@ fn tensor_as_f32(t: &Tensor) -> Result<&[f32]> {
     } else {
         Err(crate::error::Error::NotImplemented {
             op: "tensor_as_f32",
-            why: "GPU storage not supported in M3 helpers",
+            why: "GPU storage not supported here",
         })
     }
 }

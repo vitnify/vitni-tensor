@@ -21,13 +21,13 @@ pub(crate) fn rms_norm(x: &Tensor, weight: &Tensor, eps: f32) -> Result<Tensor> 
     if x.dtype() != DType::F32 || weight.dtype() != DType::F32 {
         return Err(Error::NotImplemented {
             op: "rms_norm",
-            why: "M2 supports F32 only",
+            why: "F32 only",
         });
     }
     if !x.is_contiguous() || !weight.is_contiguous() {
         return Err(Error::NotImplemented {
             op: "rms_norm",
-            why: "M2 requires contiguous layout",
+            why: "a contiguous layout is required",
         });
     }
     let dims = x.shape().dims();
@@ -44,7 +44,7 @@ pub(crate) fn rms_norm(x: &Tensor, weight: &Tensor, eps: f32) -> Result<Tensor> 
     let Storage::Cpu(ws) = weight.storage() else {
         return Err(Error::NotImplemented {
             op: "rms_norm",
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
     rms_norm_slice(x, ws.as_f32_slice(), eps)
@@ -61,13 +61,13 @@ pub(crate) fn rms_norm_slice(x: &Tensor, ws: &[f32], eps: f32) -> Result<Tensor>
     if x.dtype() != DType::F32 {
         return Err(Error::NotImplemented {
             op: "rms_norm",
-            why: "M2 supports F32 only",
+            why: "F32 only",
         });
     }
     if !x.is_contiguous() {
         return Err(Error::NotImplemented {
             op: "rms_norm",
-            why: "M2 requires contiguous layout",
+            why: "a contiguous layout is required",
         });
     }
     let dims = x.shape().dims();
@@ -84,7 +84,7 @@ pub(crate) fn rms_norm_slice(x: &Tensor, ws: &[f32], eps: f32) -> Result<Tensor>
     let Storage::Cpu(xs) = x.storage() else {
         return Err(Error::NotImplemented {
             op: "rms_norm",
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
     let xs = xs.as_f32_slice();

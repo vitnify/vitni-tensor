@@ -6,9 +6,9 @@
 //! `(real, imag)` and rotated by angle `m * theta^(-2i/dim)` where
 //! `m` is the absolute token position and `dim` is the head dim.
 //!
-//! At M2 we apply RoPE in-place-style to one tensor of shape
+//! At phase 2 we apply RoPE in-place-style to one tensor of shape
 //! `[seq, n_heads, head_dim]` for a single sequence. Pre-computed
-//! sin/cos cache support is M3+.
+//! sin/cos cache support is the GPU path.
 
 use crate::{
     error::{Error, Result},
@@ -30,13 +30,13 @@ pub(crate) fn rope(t: &Tensor, theta: f32, position_offset: usize) -> Result<Ten
     if t.dtype() != DType::F32 {
         return Err(Error::NotImplemented {
             op: "rope",
-            why: "M2 supports F32 only",
+            why: "F32 only",
         });
     }
     if !t.is_contiguous() {
         return Err(Error::NotImplemented {
             op: "rope",
-            why: "M2 requires contiguous layout",
+            why: "a contiguous layout is required",
         });
     }
     if t.shape().rank() != 3 {
@@ -53,7 +53,7 @@ pub(crate) fn rope(t: &Tensor, theta: f32, position_offset: usize) -> Result<Ten
     let Storage::Cpu(s) = t.storage() else {
         return Err(Error::NotImplemented {
             op: "rope",
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
     let xs = s.as_f32_slice();

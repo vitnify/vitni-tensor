@@ -1,7 +1,7 @@
 //! Llama2 model — the first end-to-end demonstration that ops in
 //! `src/ops/*` compose into a real, runnable LLM architecture.
 //!
-//! Architecture follows karpathy's llama2.c (also what `the reference implementation`
+//! Architecture follows karpathy's llama2.c (also what `the reference`
 //! runs) so we have a known-good reference for cross-verification.
 //!
 //! ## Layout
@@ -11,7 +11,7 @@
 //! - `forward` — single-token forward pass returning logits, plus
 //!   greedy-decode driver
 //!
-//! ## Status (M3)
+//! ## Status
 //!
 //! - Architecture defined; compiles clean no_std
 //! - Verified bit-identical against an in-test reference impl on

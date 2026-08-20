@@ -2,7 +2,7 @@
 //! exposes them as methods (mirroring Candle's API so model
 //! definitions port mechanically).
 //!
-//! CPU-only at M2. M3+ routes the matmul family to `SYS_GPU_*`
+//! CPU-only at phase 2. the GPU path routes the matmul family to `SYS_GPU_*`
 //! when a GPU device is selected.
 
 pub mod argmax;

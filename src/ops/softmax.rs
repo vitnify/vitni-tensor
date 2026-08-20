@@ -1,7 +1,7 @@
 //! Softmax along the last axis. Numerically stable: subtract max
 //! before exp.
 //!
-//! M2: last-axis only. Arbitrary-dim softmax is a stride walk —
+//! phase 2: last-axis only. Arbitrary-dim softmax is a stride walk —
 //! deferred until a model needs it.
 
 use crate::{
@@ -17,19 +17,19 @@ pub(crate) fn softmax_last_dim(t: &Tensor) -> Result<Tensor> {
     if t.dtype() != DType::F32 {
         return Err(Error::NotImplemented {
             op: "softmax",
-            why: "M2 supports F32 only",
+            why: "F32 only",
         });
     }
     if !t.is_contiguous() {
         return Err(Error::NotImplemented {
             op: "softmax",
-            why: "M2 requires contiguous layout",
+            why: "a contiguous layout is required",
         });
     }
     let Storage::Cpu(s) = t.storage() else {
         return Err(Error::NotImplemented {
             op: "softmax",
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
     let xs = s.as_f32_slice();

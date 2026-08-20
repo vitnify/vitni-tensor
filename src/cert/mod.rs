@@ -8,11 +8,11 @@
 //!
 //! Verification = re-run the same process on the same inputs, compute
 //! the cert hash, check it matches. Because vitni-tensor's forward
-//! pass is bit-for-bit deterministic (proven in M3), this claim is
+//! pass is bit-for-bit deterministic (proven in testing), this claim is
 //! meaningful — a verifier with the same Build ID, weights, and
 //! prompt can independently confirm the output.
 //!
-//! On the host runtime the substrate ALSO signs the cert with its kernel key so
+//! On the host runtime the runtime ALSO signs the cert with its kernel key so
 //! verifiers can trust the cert was produced by an authentic process.
 //! That signing layer is separate from the
 //! binding layer in this module; both produce the same binding

@@ -100,7 +100,7 @@ impl Config {
     ///
     /// Verification: with these dims plumbed through, the EXISTING
     /// `forward::step` function correctly drives a Mistral forward
-    /// pass — no per-architecture branch required. M5 demonstrates
+    /// pass — no per-architecture branch required. this demonstrates
     /// this via `tests/mistral_synthetic.rs`.
     pub const fn mistral_7b_v01() -> Self {
         Self {

@@ -1,8 +1,8 @@
 //! High-level inference driver: load → forward N steps → bind output
 //! into an ExCert.
 //!
-//! Mirrors `the reference implementation`'s cert format exactly so software-computed
-//! certs (host tests) and substrate-issued certs (the host runtime)
+//! Mirrors `the reference`'s cert format exactly so software-computed
+//! certs (host tests) and runtime-issued certs (the host runtime)
 //! produce identical binding digests for the same inputs/outputs.
 
 use super::{
@@ -41,7 +41,7 @@ pub struct Outcome {
 }
 
 /// Canonical architecture string used as the `arch_hash` input.
-/// Format matches `the reference implementation`'s `Config::arch_string`.
+/// Format matches `the reference`'s `Config::arch_string`.
 pub fn arch_string(cfg: &Config) -> String {
     format!(
         "llama2c:dim={},hidden={},layers={},heads={},kv_heads={},vocab={},seq={},shared={}",
@@ -58,7 +58,7 @@ pub fn arch_string(cfg: &Config) -> String {
 
 /// Run a full prompt+generate cycle and emit an ExCert.
 ///
-/// Cert fields (matching `the reference implementation`):
+/// Cert fields (matching `the reference`):
 ///
 ///   inputs:
 ///     - model_id        (utf-8 bytes)
@@ -97,7 +97,7 @@ pub fn run(
     })
 }
 
-/// Inference + ExCert with substrate submission.
+/// Inference + ExCert with runtime submission.
 ///
 /// Identical to `run` except every cert declaration is also replayed
 /// into `sink`. On the host runtime with a `RuntimeSink`, this issues a real
@@ -134,7 +134,7 @@ pub fn run_with_sink<S: CertSink>(
     let mut state = RunState::new(cfg);
     let mut generated: Vec<u32> = Vec::with_capacity(req.n_new_tokens);
 
-    // Decode loop mirrors the reference implementation/karpathy llama2.c:
+    // Decode loop mirrors the reference/karpathy llama2.c:
     //
     //   for pos in 0..(prompt_len + n_new):
     //     logits = forward(cur, pos)
@@ -205,7 +205,7 @@ pub fn run_with_sink<S: CertSink>(
 pub enum RunError<S> {
     /// Forward pass / tensor op failure.
     Inference(crate::error::Error),
-    /// Substrate sink rejected a call (e.g. `the runtime's cert syscall` failed).
+    /// Runtime sink rejected a call (e.g. `the runtime's cert syscall` failed).
     Sink(S),
 }
 
@@ -230,7 +230,7 @@ fn argmax_u32(t: &Tensor) -> u32 {
 // `forward_quantized::step` which routes projections through
 // `linear_q4_0` instead of plain f32 matmul.
 //
-// Cert binding is identical to the F32 path so a substrate-issued
+// Cert binding is identical to the F32 path so a runtime-issued
 // receipt for a Q4_0 run can be cross-verified against a reference
 // implementation that dequantizes the same GGUF and runs the F32
 // forward — the inputs/outputs hash the same byte sequences.
@@ -263,7 +263,7 @@ pub fn run_quantized(
     })
 }
 
-/// Quantized inference + substrate-issued ExCert.
+/// Quantized inference + runtime-issued ExCert.
 ///
 /// Bound to the SAME cert input/output schema as `run_with_sink`:
 /// model_id, weights_hash, arch_hash, prompt_tokens, n_new_tokens →

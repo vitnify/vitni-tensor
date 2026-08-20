@@ -17,7 +17,7 @@
 //! Everything else — RoPE, multi-head attention, KV cache layout,
 //! residual structure — matches `forward::step` exactly. This is the
 //! "tiny architectural delta = tiny code delta" demonstration that
-//! M5 sets out to prove. The diff against `forward::step` is ~30 LOC.
+//! this path proves. The diff against `forward::step` is ~30 LOC.
 
 use super::{config::Config, forward::RunState, weights::Weights};
 use crate::{error::Result, storage::Storage, tensor::Tensor, Shape};

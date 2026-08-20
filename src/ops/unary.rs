@@ -1,4 +1,4 @@
-//! Element-wise unary ops. M2: SiLU (Swish), needed for SwiGLU FFN.
+//! Element-wise unary ops. phase 2: SiLU (Swish), needed for SwiGLU FFN.
 //! Additional unaries (neg, sqrt, exp, gelu) added as model ports demand.
 
 use crate::{
@@ -37,19 +37,19 @@ fn apply_f32(t: &Tensor, op: &'static str, f: impl Fn(f32) -> f32) -> Result<Ten
     if t.dtype() != DType::F32 {
         return Err(Error::NotImplemented {
             op,
-            why: "M2 supports F32 only",
+            why: "F32 only",
         });
     }
     if !t.is_contiguous() {
         return Err(Error::NotImplemented {
             op,
-            why: "M2 requires contiguous layout",
+            why: "a contiguous layout is required",
         });
     }
     let Storage::Cpu(s) = t.storage() else {
         return Err(Error::NotImplemented {
             op,
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
     let xs = s.as_f32_slice();

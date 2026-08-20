@@ -24,7 +24,7 @@ pub enum Error {
         /// Op name for the trace.
         op: &'static str,
     },
-    /// GPU syscall failed. Wraps the the host runtime error.
+    /// GPU syscall failed. Wraps the host runtime error.
     GpuError(&'static str),
     /// Out of CPU memory (Vec::with_capacity failure surface).
     OutOfMemory,

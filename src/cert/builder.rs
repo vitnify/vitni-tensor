@@ -25,14 +25,14 @@ pub struct CertField {
 /// output fields). A verifier with the model weights + the same
 /// prompt can recompute every op's expected (input, params,
 /// output) hashes and check each one independently. This is the
-/// substrate primitive for per-layer attestation that mechanistic
+/// runtime primitive for per-layer attestation that mechanistic
 /// interpretability research needs.
 ///
 /// Size: ~16 bytes name + 4 + 4 + 3×32 = ~120 bytes per record.
 /// For stories15M (6 layers × 11 ops = 66 ops/token), a 32-token
 /// inference produces ~2,112 records → ~250 KB total. Fits the
 /// in-process cert easily; CAS-store discipline handled by the
-/// substrate sink (see `CertSink::on_op`).
+/// runtime sink (see `CertSink::on_op`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpRecord {
     /// Monotonic index assigned by the builder. Stable across runs
@@ -92,13 +92,13 @@ pub struct ActivationRecord {
 /// Causal-intervention record bound by Phase 4c. Declares "at
 /// checkpoint C of token T, the residual stream was OVERRIDDEN
 /// with a tensor whose BLAKE3 is `replacement_hash`". The
-/// substrate forward pass consults the intervention list at each
+/// runtime forward pass consults the intervention list at each
 /// checkpoint and substitutes the override tensor before the next
 /// op runs.
 ///
 /// Lets a verifier (or auditor) ask "if activation X had been Y
 /// instead of Z, would the output have been different?" — the
-/// substrate-attested answer is the modified cert's output.
+/// runtime-attested answer is the modified cert's output.
 ///
 /// Cert binding: the intervention list itself is hashed into the
 /// digest (so the cert proves WHAT WAS PERTURBED), and the
@@ -362,7 +362,7 @@ impl CertBuilder {
         }
     }
 
-    /// Finalize the cert AND replay every declaration into a substrate
+    /// Finalize the cert AND replay every declaration into a runtime
     /// sink. Returns `(software_cert, substrate_cert_id)`.
     ///
     /// The sink sees calls in this order:
@@ -371,7 +371,7 @@ impl CertBuilder {
     ///   2. `on_input(name, bytes)` × n_inputs (declaration order)
     ///   3. `on_op(record)` × n_ops (declaration order, PerOp only)
     ///   4. `on_output(name, bytes)` × n_outputs (declaration order)
-    ///   5. `on_finalize()` — returns the substrate-issued cert id
+    ///   5. `on_finalize()` — returns the runtime-issued cert id
     ///
     /// On the host runtime with a `RuntimeSink` (see `cert::sink` module docs),
     /// the kernel-issued cert and the returned software `Cert` carry

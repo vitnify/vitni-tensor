@@ -1,28 +1,28 @@
-//! Cert sink — substrate wiring without a the host runtime dependency.
+//! Cert sink — runtime wiring without a the host runtime dependency.
 //!
 //! vitni-tensor stays standalone: it never depends on the host runtime directly.
-//! Instead it defines this trait, and the user (the host runtime userspace
+//! Instead it defines this trait, and the user (the host application
 //! binary, or downstream wrapper crate) plugs in an impl that calls
 //! the real `the runtime's cert API` syscalls.
 //!
 //! Cross-verification property: the software cert digest (computed
-//! by `CertBuilder::finalize`) MUST equal the substrate-issued cert
+//! by `CertBuilder::finalize`) MUST equal the runtime-issued cert
 //! digest (computed inside the kernel from the same `declare_input`/
 //! `declare_output` calls). Because the binding format is identical
-//! — the runtime's substrate cert system uses the same canonical hash over
+//! — the runtime's runtime cert system uses the same canonical hash over
 //! length-prefixed (name, bytes) pairs — both paths produce the same
-//! 32-byte digest. The substrate just adds its kernel signature on
+//! 32-byte digest. The runtime just adds its kernel signature on
 //! top so verifiers can trust the cert was issued by an authentic
 //! the host runtime process.
 //!
 //! # runtime-side wiring
 //!
-//! In a the host runtime userspace binary using vitni-tensor:
+//! In a the host application binary using vitni-tensor:
 //!
 //! ```ignore
 //! struct RuntimeSink;
 //! impl vitni_tensor::cert::CertSink for RuntimeSink {
-//!     type Error = the host runtime::Error;
+//!     type Error = host::Error;
 //!     fn on_request(&mut self, tier: u8) -> Result<(), Self::Error> {
 //!         the runtime's cert API(tier).map(|_| ())
 //!     }
@@ -44,7 +44,7 @@
 
 use alloc::vec::Vec;
 
-/// Substrate-side cert pipeline. The default `NullSink` does nothing
+/// Runtime-side cert pipeline. The default `NullSink` does nothing
 /// (software-only path); a runtime-side impl forwards to `the runtime's cert API`.
 pub trait CertSink {
     /// Per-sink error type. Use `core::convert::Infallible` for sinks
@@ -63,7 +63,7 @@ pub trait CertSink {
     ///
     /// Default impl is a no-op so existing sinks (including the
     /// downstream `RuntimeSink`) compile without modification.
-    /// Sinks that want substrate-side per-op attestation override
+    /// Sinks that want runtime-side per-op attestation override
     /// this to forward each record to `the runtime's cert API`
     /// (kernel the runtime's cert syscall, Phase 4a kernel-side work).
     fn on_op(&mut self, _op: &super::builder::OpRecord) -> Result<(), Self::Error> {
@@ -75,7 +75,7 @@ pub trait CertSink {
     ///
     /// Default impl is a no-op so existing sinks (NullSink,
     /// pre-Phase-4b RuntimeSink implementations) compile without
-    /// modification. Sinks that want substrate-side activation
+    /// modification. Sinks that want runtime-side activation
     /// attestation override this to forward each record to
     /// `the runtime's cert API`
     /// (kernel the runtime's cert syscall, Phase 4b kernel work).
@@ -88,7 +88,7 @@ pub trait CertSink {
 
     /// Called for each declared causal-intervention record (Phase 4c),
     /// in declaration order, AFTER activations and BEFORE outputs.
-    /// Default no-op for sink-compat. Substrate sinks forward to
+    /// Default no-op for sink-compat. Runtime sinks forward to
     /// `the runtime's cert API`
     /// (kernel the runtime's cert syscall).
     fn on_intervention(
@@ -101,13 +101,13 @@ pub trait CertSink {
     /// Called for each declared output, in declaration order.
     fn on_output(&mut self, name: &str, bytes: &[u8]) -> Result<(), Self::Error>;
 
-    /// Called once at the end. Returns the substrate-issued cert ID
-    /// (for `the host runtime`, the `u64` from `excert_finalize`). Sinks that
+    /// Called once at the end. Returns the runtime-issued cert ID
+    /// (for the host runtime, the `u64` from the runtime finalize call). Sinks that
     /// don't issue an ID may return 0.
     fn on_finalize(&mut self) -> Result<u64, Self::Error>;
 }
 
-/// No-op sink. Used when the caller doesn't want substrate submission
+/// No-op sink. Used when the caller doesn't want runtime submission
 /// (host tests, dry-run mode). All methods succeed without side effects.
 pub struct NullSink;
 
@@ -170,7 +170,7 @@ pub enum SinkEvent {
 }
 
 /// Sink that records every call into a `Vec<SinkEvent>` for test
-/// inspection. Used to verify substrate-side declarations match the
+/// inspection. Used to verify runtime-side declarations match the
 /// software-side digest field-for-field.
 #[derive(Debug, Default)]
 pub struct RecordingSink {

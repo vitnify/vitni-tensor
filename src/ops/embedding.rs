@@ -4,7 +4,7 @@
 //! `weight`: rank-2 F32 tensor of shape `[vocab_size, dim]`.
 //! Output: rank-(N+1) F32 tensor — the index shape with `dim` appended.
 //!
-//! At M2 the common LLM case is indices=`[seq]`, weight=`[vocab, dim]`,
+//! For the common LLM case is indices=`[seq]`, weight=`[vocab, dim]`,
 //! output=`[seq, dim]`. We support exactly that shape; higher ranks
 //! later.
 
@@ -38,13 +38,13 @@ pub(crate) fn embedding(indices: &Tensor, weight: &Tensor) -> Result<Tensor> {
     if indices.shape().rank() != 1 {
         return Err(Error::NotImplemented {
             op: "embedding",
-            why: "M2 supports rank-1 indices only",
+            why: "only rank-1 indices are supported",
         });
     }
     if !indices.is_contiguous() || !weight.is_contiguous() {
         return Err(Error::NotImplemented {
             op: "embedding",
-            why: "M2 requires contiguous layout",
+            why: "a contiguous layout is required",
         });
     }
 
@@ -54,7 +54,7 @@ pub(crate) fn embedding(indices: &Tensor, weight: &Tensor) -> Result<Tensor> {
     let (Storage::Cpu(ix_s), Storage::Cpu(w_s)) = (indices.storage(), weight.storage()) else {
         return Err(Error::NotImplemented {
             op: "embedding",
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
 

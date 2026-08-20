@@ -1,12 +1,12 @@
 //! 2D matrix multiplication.
 //!
 //! CPU reduction uses the CANONICAL fixed shape (CANON_BLOCK-sized blocks
-//! then a fixed pairwise tree) — the same regime as the reference implementation and the
+//! then a fixed pairwise tree) — the same regime as the reference and the
 //! CUDA reference kernel, so issuer and verifier agree bit-for-bit. Hardware
 //! may parallelize the shape but may not choose its own order.
-//! M3: route to `SYS_GPU_MATMUL` when the tensors live on a Gpu device.
+//! phase 3: route to `SYS_GPU_MATMUL` when the tensors live on a Gpu device.
 //!
-//! Higher-rank batched matmul is M3+ work. For M2 we accept rank-2
+//! Higher-rank batched matmul is the GPU path work. For phase 2 we accept rank-2
 //! tensors only — that's enough to walk a single transformer
 //! layer's projections (Q/K/V/O/MLP) one at a time.
 
@@ -20,7 +20,7 @@ use crate::{
 
 /// Canonical reduction block size. This is part of the numerical CONTRACT,
 /// not a tuning knob: it must match every other implementation in the system
-/// (the reference implementation's row dot, the CUDA reference kernel) or results are
+/// (the reference's row dot, the CUDA reference kernel) or results are
 /// deterministic per-shape but not comparable ACROSS shapes — which would
 /// break replay between the issuer and the verifier.
 pub(crate) const CANON_BLOCK: usize = 8;
@@ -34,19 +34,19 @@ pub(crate) fn matmul(lhs: &Tensor, rhs: &Tensor) -> Result<Tensor> {
     if lhs.dtype() != DType::F32 || rhs.dtype() != DType::F32 {
         return Err(Error::NotImplemented {
             op: "matmul",
-            why: "M2 supports F32 only",
+            why: "F32 only",
         });
     }
     if lhs.shape().rank() != 2 || rhs.shape().rank() != 2 {
         return Err(Error::NotImplemented {
             op: "matmul",
-            why: "M2 supports rank-2 inputs only (batched matmul = M3)",
+            why: "rank-2 inputs only",
         });
     }
     if !lhs.is_contiguous() || !rhs.is_contiguous() {
         return Err(Error::NotImplemented {
             op: "matmul",
-            why: "M2 requires contiguous layout",
+            why: "a contiguous layout is required",
         });
     }
 
@@ -65,20 +65,20 @@ pub(crate) fn matmul(lhs: &Tensor, rhs: &Tensor) -> Result<Tensor> {
     let Storage::Cpu(ls) = lhs.storage() else {
         return Err(Error::NotImplemented {
             op: "matmul",
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
     let Storage::Cpu(rs) = rhs.storage() else {
         return Err(Error::NotImplemented {
             op: "matmul",
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
     let a = ls.as_f32_slice();
     let b = rs.as_f32_slice();
 
     // CANONICAL REDUCTION over k — the same fixed shape used by
-    // the reference implementation's row dot and by the CUDA reference kernel, so every
+    // the reference's row dot and by the CUDA reference kernel, so every
     // path in the system shares ONE numerical regime.
     //
     // This replaced a serial `for kk in 0..k { acc += .. }` whose determinism
@@ -139,9 +139,9 @@ mod tests {
     /// This crate is what excert-verifier replays through, so its arithmetic
     /// IS the certificate's definition of "the same computation". The reduction
     /// is the CANONICAL fixed shape (CANON_BLOCK blocks + pairwise tree), the
-    /// same one used by the reference implementation and the CUDA reference kernel, so all
+    /// same one used by the reference and the CUDA reference kernel, so all
     /// three share one numerical regime.
-    /// That is not hypothetical: the reference implementation carried an x86-only SSE
+    /// That is not hypothetical: the reference carried an x86-only SSE
     /// `sse_row_dot` (4 lane accumulators + horizontal tree) alongside a serial
     /// fallback, so the SAME model produced DIFFERENT BITS per architecture and
     /// its certificates could never have replayed cross-arch. Nobody noticed,

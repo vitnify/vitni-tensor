@@ -1,9 +1,9 @@
 //! Accelerator — dispatch point for matmul-family ops.
 //!
 //! Same architectural pattern as `cert::sink`: vitni-tensor defines
-//! the trait, downstream code (the host runtime userspace) provides the impl
+//! the trait, downstream code (the host application) provides the impl
 //! that calls `SYS_GPU_*` syscalls. This keeps vitni-tensor standalone
-//! (no the host runtime dep) while letting model code transparently route the
+//! (no host-runtime dependency) while letting model code transparently route the
 //! expensive ops through hardware acceleration.
 //!
 //! ## Why on the model code, not on `Tensor`?
@@ -40,7 +40,7 @@
 //! ```ignore
 //! struct RuntimeGpu;
 //! impl vitni_tensor::accel::Accelerator for RuntimeGpu {
-//!     type Error = the host runtime::Error;
+//!     type Error = host::Error;
 //!     fn matmul(&mut self, lhs: &Tensor, rhs: &Tensor) -> Result<Tensor, Self::Error> {
 //!         let (m, k_l) = (lhs.shape().dims()[0], lhs.shape().dims()[1]);
 //!         let (k_r, n) = (rhs.shape().dims()[0], rhs.shape().dims()[1]);
@@ -49,17 +49,17 @@
 //!             return Tensor::matmul(lhs, rhs).map_err(...);
 //!         }
 //!         // Upload, dispatch, download via the GPU backend::*
-//!         let l_handle = the host runtime::syscall::gpu_alloc(m * k_l * 4)?;
-//!         the host runtime::syscall::gpu_upload(l_handle, lhs_bytes(lhs))?;
-//!         let r_handle = the host runtime::syscall::gpu_alloc(k_r * n * 4)?;
-//!         the host runtime::syscall::gpu_upload(r_handle, rhs_bytes(rhs))?;
-//!         let o_handle = the host runtime::syscall::gpu_alloc(m * n * 4)?;
-//!         the host runtime::syscall::gpu_matmul(l_handle, r_handle, o_handle, m, n, k_l)?;
+//!         let l_handle = host::syscall::gpu_alloc(m * k_l * 4)?;
+//!         host::syscall::gpu_upload(l_handle, lhs_bytes(lhs))?;
+//!         let r_handle = host::syscall::gpu_alloc(k_r * n * 4)?;
+//!         host::syscall::gpu_upload(r_handle, rhs_bytes(rhs))?;
+//!         let o_handle = host::syscall::gpu_alloc(m * n * 4)?;
+//!         host::syscall::gpu_matmul(l_handle, r_handle, o_handle, m, n, k_l)?;
 //!         let mut buf = vec![0u8; m * n * 4];
-//!         the host runtime::syscall::gpu_download(o_handle, &mut buf)?;
-//!         the host runtime::syscall::gpu_free(l_handle)?;
-//!         the host runtime::syscall::gpu_free(r_handle)?;
-//!         the host runtime::syscall::gpu_free(o_handle)?;
+//!         host::syscall::gpu_download(o_handle, &mut buf)?;
+//!         host::syscall::gpu_free(l_handle)?;
+//!         host::syscall::gpu_free(r_handle)?;
+//!         host::syscall::gpu_free(o_handle)?;
 //!         Tensor::from_f32(f32_from_bytes(buf), Shape::new(&[m, n])?)
 //!     }
 //!     // similar for softmax_last_dim, rms_norm, silu

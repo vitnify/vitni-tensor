@@ -1,6 +1,6 @@
 //! Element-wise binary ops: add, sub, mul, div.
 //!
-//! No broadcasting at M2 — shapes must match exactly. Add broadcasting
+//! No broadcasting at phase 2 — shapes must match exactly. Add broadcasting
 //! when a model architecture demands it (most LLM ops are same-shape).
 
 use crate::{
@@ -56,24 +56,24 @@ pub(crate) fn div(lhs: &Tensor, rhs: &Tensor) -> Result<Tensor> {
 }
 
 /// Common F32 elementwise pathway. CPU contiguous fast path; other
-/// layouts handled by reading via strides (M5 work).
+/// layouts handled by reading via strides (phase 5 work).
 fn apply_f32(lhs: &Tensor, rhs: &Tensor, f: impl Fn(f32, f32) -> f32) -> Result<Tensor> {
     if lhs.dtype() != DType::F32 {
         return Err(Error::NotImplemented {
             op: "binary",
-            why: "M2 supports F32 only",
+            why: "F32 only",
         });
     }
     if !lhs.is_contiguous() || !rhs.is_contiguous() {
         return Err(Error::NotImplemented {
             op: "binary",
-            why: "M2 requires contiguous layout",
+            why: "a contiguous layout is required",
         });
     }
     let (Storage::Cpu(l), Storage::Cpu(r)) = (lhs.storage(), rhs.storage()) else {
         return Err(Error::NotImplemented {
             op: "binary",
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
     let l = l.as_f32_slice();

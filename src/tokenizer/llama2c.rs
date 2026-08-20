@@ -1,7 +1,7 @@
 //! BPE tokenizer for karpathy's llama2.c binary tokenizer format.
 //!
 //! Wire format (matches what karpathy's `tokenizer.bin` and
-//! `the reference implementation` consume):
+//! `the reference` consume):
 //!
 //!   u32  max_token_length
 //!   for i in 0..vocab_size:
@@ -14,7 +14,7 @@
 //! merge is possible. O(N²) per step but fast on real prompts
 //! (~10-100 bytes).
 //!
-//! Ported from `userspace/the reference implementation/src/main.rs::Tokenizer`
+//! Ported from `userspace/the reference/src/main.rs::Tokenizer`
 //! so behavior is bit-identical — same prompt → same token IDs
 //! → same cert binding.
 

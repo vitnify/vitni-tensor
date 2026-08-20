@@ -17,7 +17,7 @@
 //!   tensor_data        opaque blob; each tensor at base + offset
 //! ```
 //!
-//! ## Supported tensor dtypes (M2 / Phase 2)
+//! ## Supported tensor dtypes
 //!
 //! - F32 (ggml type 0)
 //! - F16 (ggml type 1)  — read as raw u16 LE, callers dequant if needed

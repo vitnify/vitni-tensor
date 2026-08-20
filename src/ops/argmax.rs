@@ -4,7 +4,7 @@
 //! highest-probability token at each position.
 //!
 //! Determinism note: when two values tie, we keep the FIRST one
-//! (smallest index). This matches the reference implementation's behavior and
+//! (smallest index). This matches the reference's behavior and
 //! ensures cross-vendor reproducibility — without this rule a
 //! reordered traversal could pick a different tied value.
 
@@ -28,13 +28,13 @@ pub(crate) fn argmax_last_dim(t: &Tensor) -> Result<Tensor> {
     if !t.is_contiguous() {
         return Err(Error::NotImplemented {
             op: "argmax",
-            why: "M2 requires contiguous layout",
+            why: "a contiguous layout is required",
         });
     }
     let Storage::Cpu(s) = t.storage() else {
         return Err(Error::NotImplemented {
             op: "argmax",
-            why: "M2 is CPU-only",
+            why: "CPU-only",
         });
     };
     let xs = s.as_f32_slice();

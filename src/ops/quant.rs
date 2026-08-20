@@ -389,7 +389,7 @@ pub fn dequantize_q6_k(q6k_data: &[u8]) -> Result<Vec<f32>> {
 /// `linear_q4_0_cpu`'s contract: row-major weight, row-major
 /// activation, fused dequant+matmul.
 /// Canonical dot product — the SAME fixed shape as `ops::matmul` and
-/// `the reference implementation`, so quantized inference shares the one numerical regime a
+/// `the reference`, so quantized inference shares the one numerical regime a
 /// certificate declares.
 ///
 /// This matters because the quantized kernels below ARE the real LLM inference
@@ -573,6 +573,10 @@ pub fn canonical_combine(chunk_sums: &mut [f32]) -> f32 {
     fixed_tree(chunk_sums)
 }
 
+// A distinct reduction order (blocked, not the pinned 8-deep chain), kept ONLY as a
+// test reference: `v2_reduction_order_differs_from_v1` uses it to prove the reduction
+// order is load-bearing. Scoped to tests so it is never mistaken for a live kernel.
+#[cfg(test)]
 #[inline]
 pub(crate) fn canonical_dot_regime2(x: &[f32], w: &[f32], n: usize) -> f32 {
     const CANON_BLOCK: usize = 8;
@@ -603,122 +607,6 @@ pub(crate) fn canonical_dot_regime2(x: &[f32], w: &[f32], n: usize) -> f32 {
     part[0]
 }
 
-/// Fused dequant + canonical dot for ONE Q4_K row.
-///
-/// `linear_q4_k_cpu` below calls `dequantize_q4_k` on the ENTIRE weight
-/// matrix before touching a single output element. At batch=1 — which is
-/// every autoregressive decode step — that materialises `out_feat *
-/// in_feat` f32 values to read each of them exactly once. For Mistral-7B
-/// a single FFN weight is 4096x14336, so one call allocates and writes
-/// 235 MB, and one token across 32 layers moves roughly 28 GB. That, not
-/// the reduction, is why the reference runs at ~0.13 tok/s.
-///
-/// This walks the quantized bytes instead, dequantising one 256-weight
-/// super-block into a stack buffer and consuming it immediately. Peak
-/// working set is 1 KiB rather than the whole matrix.
-///
-/// **Bit-identical to dequantize-then-`canonical_dot`, by construction:**
-/// the dequant arithmetic is copied unchanged, each product is the same
-/// `x[i] * w[i]`, and Q4_K_BLOCK_NUMEL (256) is an exact multiple of
-/// CANON_BLOCK (8) — so super-block boundaries never split a canonical
-/// block and the `part` array is filled in the same order with the same
-/// values. No regime change; every issued certificate stays valid.
-/// `fused_q4k_dot_is_bit_identical` asserts this rather than assuming it.
-pub fn canonical_dot_q4k_fused_regime2(x: &[f32], w_q4k: &[u8], n: usize) -> Result<f32> {
-    if w_q4k.len() % Q4_K_BLOCK_BYTES != 0 {
-        return Err(Error::Internal("Q4_K byte length not a multiple of 144"));
-    }
-    if n == 0 {
-        return Ok(0.0);
-    }
-    const CANON_BLOCK: usize = 8;
-    let n_super = w_q4k.len() / Q4_K_BLOCK_BYTES;
-    if n_super * Q4_K_BLOCK_NUMEL < n {
-        return Err(Error::Internal("Q4_K row shorter than n"));
-    }
-    let nb = (n + CANON_BLOCK - 1) / CANON_BLOCK;
-    let mut part = alloc::vec![0.0f32; nb];
-    let mut pi = 0usize;
-    let mut buf = [0.0f32; Q4_K_BLOCK_NUMEL];
-
-    for b in 0..n_super {
-        let base = b * Q4_K_BLOCK_NUMEL;
-        if base >= n {
-            break;
-        }
-        // ---- dequantize this super-block (identical to dequantize_q4_k) ----
-        let off = b * Q4_K_BLOCK_BYTES;
-        let d = f16_to_f32(u16::from_le_bytes([w_q4k[off], w_q4k[off + 1]]));
-        let dmin = f16_to_f32(u16::from_le_bytes([w_q4k[off + 2], w_q4k[off + 3]]));
-        let mut scales = [0u8; 12];
-        scales.copy_from_slice(&w_q4k[off + 4..off + 16]);
-        let qs = &w_q4k[off + 16..off + Q4_K_BLOCK_BYTES];
-        let mut is = 0usize;
-        let mut q_off = 0usize;
-        let mut y = 0usize;
-        for _ in (0..Q4_K_BLOCK_NUMEL).step_by(64) {
-            let (sc1, m1) = get_scale_min_k4(is, &scales);
-            let (sc2, m2) = get_scale_min_k4(is + 1, &scales);
-            let d1 = d * sc1 as f32;
-            let m1f = dmin * m1 as f32;
-            let d2 = d * sc2 as f32;
-            let m2f = dmin * m2 as f32;
-            // Slice-and-zip rather than index arithmetic: same values, same
-            // order, but LLVM sees a known-length loop with no bounds checks
-            // and vectorises it. Measured 43% of this kernel's time.
-            let qsl = &qs[q_off..q_off + 32];
-            let (lo, hi) = buf[y..y + 64].split_at_mut(32);
-            for (o, &q) in lo.iter_mut().zip(qsl.iter()) {
-                *o = d1 * (q & 0x0F) as f32 - m1f;
-            }
-            for (o, &q) in hi.iter_mut().zip(qsl.iter()) {
-                *o = d2 * (q >> 4) as f32 - m2f;
-            }
-            y += 64;
-            q_off += 32;
-            is += 2;
-        }
-
-        // ---- consume immediately, canonical order preserved ----
-        // chunks_exact keeps the CANON_BLOCK sequential chain intact (so the
-        // bits are unchanged) while removing per-element bounds checks.
-        let avail = core::cmp::min(Q4_K_BLOCK_NUMEL, n - base);
-        let xs = &x[base..base + avail];
-        let bs = &buf[..avail];
-        for (xc, bc) in xs.chunks_exact(CANON_BLOCK).zip(bs.chunks_exact(CANON_BLOCK)) {
-            let mut acc = 0.0f32;
-            for j in 0..CANON_BLOCK {
-                let p = xc[j] * bc[j];
-                acc += p;
-            }
-            part[pi] = acc;
-            pi += 1;
-        }
-        let rem = avail % CANON_BLOCK;
-        if rem != 0 {
-            let s = avail - rem;
-            let mut acc = 0.0f32;
-            for t in s..avail {
-                let p = x[base + t] * buf[t];
-                acc += p;
-            }
-            part[pi] = acc;
-            pi += 1;
-        }
-    }
-
-    // Same fixed pairwise tree as canonical_dot.
-    let mut len = nb;
-    while len > 1 {
-        let half = (len + 1) / 2;
-        for t in 0..half {
-            let u = 2 * t;
-            part[t] = if u + 1 < len { part[u] + part[u + 1] } else { part[u] };
-        }
-        len = half;
-    }
-    Ok(part[0])
-}
 
 /// Regime-3 variant of `canonical_dot_q4k_fused`: identical dequant, but
 /// the reduction uses CANON_LANES independent chains instead of v1's
@@ -1564,38 +1452,6 @@ pub fn linear_q4_k_fused(
     Ok(())
 }
 
-/// Fused-dequant linear. Same signature and same bits as
-/// `linear_q4_k_cpu`, without materialising the weight matrix.
-pub fn linear_q4_k_fused_regime2(
-    x: &[f32],
-    w_q4k: &[u8],
-    y_out: &mut [f32],
-    batch: usize,
-    in_feat: usize,
-    out_feat: usize,
-) -> Result<()> {
-    if x.len() != batch * in_feat {
-        return Err(Error::Internal("linear_q4_k_fused: x shape mismatch"));
-    }
-    if y_out.len() != batch * out_feat {
-        return Err(Error::Internal("linear_q4_k_fused: y shape mismatch"));
-    }
-    if in_feat % Q4_K_BLOCK_NUMEL != 0 {
-        return Err(Error::Internal("linear_q4_k_fused: in_feat not a multiple of 256"));
-    }
-    let row_bytes = (in_feat / Q4_K_BLOCK_NUMEL) * Q4_K_BLOCK_BYTES;
-    if w_q4k.len() < out_feat * row_bytes {
-        return Err(Error::Internal("linear_q4_k_fused: weight shape mismatch"));
-    }
-    for b in 0..batch {
-        let x_row = &x[b * in_feat..(b + 1) * in_feat];
-        for o in 0..out_feat {
-            let w_row = &w_q4k[o * row_bytes..(o + 1) * row_bytes];
-            y_out[b * out_feat + o] = canonical_dot_q4k_fused_regime2(x_row, w_row, in_feat)?;
-        }
-    }
-    Ok(())
-}
 
 pub fn linear_q4_k_cpu(
     x: &[f32],
@@ -2113,7 +1969,7 @@ mod tests {
     /// from regime 3 — both give 0x40ce39e1 — so the regime fingerprint
     /// mixes this size as well. Pinned here so the two stay in step.
     /// Cross-checked against the issuer's independent implementation
-    /// (the reference implementation::sse_row_dot) and the verifier's regime probe:
+    /// (the reference::sse_row_dot) and the verifier's regime probe:
     /// all three produce 0xc1a3bf11.
     #[test]
     fn v2_discriminating_reference_is_pinned() {
