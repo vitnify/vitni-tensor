@@ -11,8 +11,15 @@ concurrency:
 
 jobs:
   test:
-    name: build & test (stable)
-    runs-on: ubuntu-latest
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # x86-64 (ubuntu) AND aarch64 (macos): the pinned cross-vendor hashes must be
+        # bit-identical on both, so running the suite on both turns every pinned-hash
+        # test into a genuine cross-ISA gate instead of a single-platform assertion.
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -28,8 +35,16 @@ jobs:
       - name: Build (release)
         run: cargo build --release
 
+      # Lib tests include the pinned reduction/quant hashes; running them on both
+      # runners is the cross-ISA bit-identity check.
       - name: Unit & determinism tests
         run: cargo test --release --lib
+
+      # The transcendental determinism test is an integration test, so `--lib` never
+      # ran it. Run it explicitly on both ISAs: its pinned hash must match on x86-64
+      # and aarch64, which is the softfloat-path cross-vendor claim.
+      - name: Cross-ISA transcendental determinism
+        run: cargo test --release --test transcendental_determinism
 
       # Adversarial GGUF parser tests: malformed/hostile inputs must return Err
       # without panicking. The model-driven integration tests are #[ignore]d and

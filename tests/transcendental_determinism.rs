@@ -48,5 +48,21 @@ fn transcendental_determinism() {
     let digest = *h.finalize().as_bytes();
     eprintln!("TRANSCENDENTAL inputs={} evaluations={} hash={}",
         inputs.len(), inputs.len() * 7, hex(&digest));
-    assert_eq!(inputs.len() * 7 % 7, 0);
+
+    // PINNED cross-ISA reference. This exact hash is reproduced bit-for-bit on
+    // aarch64-apple-darwin and x86-64 (both run in CI), which is what proves the
+    // softfloat transcendental path is architecture-independent rather than merely
+    // assumed to be. Same discipline as `matmul_reduction_bits_are_pinned`.
+    //
+    // DO NOT edit this value to make a failing build pass. A moved hash means the
+    // libm path is no longer bit-identical across architectures -- the whole claim --
+    // so a failure here is a real finding, not a stale constant. (The previous
+    // `assert_eq!(inputs.len() * 7 % 7, 0)` was always true and tested nothing: the
+    // hash was computed, printed, and never checked.)
+    const PINNED_TRANSCENDENTAL: &str =
+        "0ae93cd6394c934bfb94a5803a0528193ba0c2330002162a0094062c294bc3d0";
+    assert_eq!(
+        hex(&digest), PINNED_TRANSCENDENTAL,
+        "software transcendental path diverged from the pinned cross-ISA reference"
+    );
 }

@@ -70,5 +70,22 @@ fn determinism_sweep() {
         runs, gen_tokens, prompts.len(), cfg.n_layers, cfg.vocab_size);
     eprintln!("weights hash   : {}", hex(&wh));
     eprintln!("aggregate hash : {}", hex(&a));
-    assert!(runs > 0);
+    assert!(runs > 0, "sweep produced no runs");
+
+    // Determinism is the property under test, and `runs > 0` asserted nothing about
+    // it. Re-run the first request and require an IDENTICAL certificate digest, so a
+    // non-deterministic engine fails here instead of silently folding a different
+    // number into the aggregate.
+    let req = inference::Request { model_id: "sweep", prompt_tokens: &prompts[0], n_new_tokens: gens[0] };
+    let d1 = inference::run_quantized(&cfg, &w, &wh, &req).expect("run").cert.digest;
+    let d2 = inference::run_quantized(&cfg, &w, &wh, &req).expect("run").cert.digest;
+    assert_eq!(d1, d2, "engine is non-deterministic: identical request produced differing cert digests");
+
+    // Cross-host gate (opt-in): set SWEEP_EXPECT to the aggregate hash captured on a
+    // reference host and the build fails if THIS host diverges -- the sweep's analogue
+    // of the pinned lib-test hashes. Hardcoding it requires fixing the checkpoint and
+    // SWEEP_N/SWEEP_MAXLEN; until then the aggregate is printed above to capture from.
+    if let Ok(expect) = std::env::var("SWEEP_EXPECT") {
+        assert_eq!(hex(&a), expect.trim(), "sweep aggregate diverged from SWEEP_EXPECT");
+    }
 }
