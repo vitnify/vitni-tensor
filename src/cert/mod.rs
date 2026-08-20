@@ -24,10 +24,22 @@
 //! A cert is `(inputs, outputs, digest)` where:
 //!
 //!   `digest = BLAKE3(`
-//!     `"vitnify-receipt v1" || 0x00 ||`
+//!     `"vitnify-receipt v2" || 0x00 ||`
+//!     `LEB128(|regime|) || regime ||`
 //!     `LEB128(n_inputs)  || for each: LEB128(|name|) || name || LEB128(|bytes|) || bytes ||`
 //!     `LEB128(n_outputs) || for each: same format`
 //!   `)`
+//!
+//! `regime` (see [`builder::REGIME`]) names the numerical reduction contract the
+//! forward pass ran under. Binding it is what lets a verifier tell a deliberate regime
+//! change ("cannot replay under this engine") from tampering; v1 (frozen) omitted it.
+//!
+//! What the SHIPPED `vitni-receipt` binary commits is an **I/O pair under a fixed
+//! engine**: the inputs above are `(model_id, weights_hash, arch_hash, prompt_tokens,
+//! n_new_tokens)` and the outputs are `(output_tokens, output_tokens_hash)`, with
+//! `n_ops = 0`. Per-op / activation records are an available mode (`ExCertMode::PerOp`,
+//! well tested) that the shipped binary does not emit — so a different implementation
+//! producing the same tokens under the same regime yields the same digest.
 //!
 //! Names and byte-blobs are length-prefixed so concatenation is
 //! injective (no `(["a", "bc"], "")` vs `(["ab", "c"], "")` collision).

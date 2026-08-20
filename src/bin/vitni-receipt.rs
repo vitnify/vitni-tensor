@@ -1,4 +1,4 @@
-//! vitni-receipt — emit a `vitnify-receipt v1` model-computation digest for a run.
+//! vitni-receipt — emit a `vitnify-receipt v2` model-computation digest for a run.
 //!
 //! Given a GGUF model and a prompt (comma-separated token IDs), run the deterministic
 //! engine and print, as JSON, the generated tokens and the model-computation digest.
@@ -37,10 +37,19 @@ fn main() {
     let req = inference::Request { model_id: &model_id, prompt_tokens: &prompt, n_new_tokens: n };
     let a = inference::run_quantized(&cfg, &weights, &weights_hash, &req).expect("run");
 
+    // The shipped `model_digest` is v2 (binds the numerical REGIME). The frozen v1
+    // digest for the same run is emitted too, so a pre-regime (v1) receipt stays
+    // reproducible and the two are never confused.
+    let c = &a.cert;
+    let digest_v1 = vitni_tensor::cert::builder::compute_digest_v1(
+        &c.inputs, &c.outputs, &c.ops, &c.activations, &c.interventions);
+
     let toks: Vec<String> = a.generated_tokens.iter().map(|t| t.to_string()).collect();
     println!(
-        "{{\"model_digest\":\"{}\",\"weights_hash\":\"{}\",\"tokens\":[{}]}}",
-        hex(&a.cert.digest),
+        "{{\"model_digest\":\"{}\",\"regime\":\"{}\",\"model_digest_v1\":\"{}\",\"weights_hash\":\"{}\",\"tokens\":[{}]}}",
+        hex(&c.digest),
+        vitni_tensor::cert::builder::REGIME,
+        hex(&digest_v1),
         hex(&weights_hash),
         toks.join(",")
     );

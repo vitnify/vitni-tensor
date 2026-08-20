@@ -425,15 +425,29 @@ impl CertBuilder {
     }
 }
 
-/// Compute the canonical BLAKE3 binding digest.
+/// The numerical regime this engine build computes under — the reduction contract
+/// (pinned reduction order, no FMA contraction, no reassociation) that makes the
+/// forward pass bit-identical across CPU vendors (see
+/// `ops::matmul::tests::matmul_reduction_bits_are_pinned`). It is BOUND into every
+/// `vitnify-receipt v2` digest, so a receipt records WHICH regime produced it.
 ///
-/// Public receipt format `vitnify-receipt v1`. The digest binds a
-/// causal-intervention section appended after activations; absent
-/// sections write single LEB128 zeros, so the digest is well-defined
-/// for every mode combination.
+/// BUMP THIS whenever the reduction changes — i.e. whenever a pinned reduction hash
+/// moves. A v2 receipt issued under the old regime is then cryptographically
+/// distinguishable from one issued under the new regime: an L2 verifier can report
+/// "regime moved — cannot replay this receipt with this engine" instead of a silent
+/// hash mismatch that is indistinguishable from tampering. The format version
+/// (`v1`/`v2`) versions the wire layout; `REGIME` versions the arithmetic.
+pub const REGIME: &str = "vitni-regime-1";
+
+/// Compute the canonical BLAKE3 binding digest for the SHIPPED format,
+/// `vitnify-receipt v2`. Identical to v1 except the domain is `v2` and the numerical
+/// [`REGIME`] is bound immediately after it (length-prefixed like every field), so the
+/// receipt records the regime it was produced under. Absent sections write single
+/// LEB128 zeros, so the digest is well-defined for every mode combination.
 ///
 /// Format:
-///   "vitnify-receipt v1\x00"
+///   "vitnify-receipt v2\x00"
+///   LEB128 |REGIME| ; REGIME
 ///   LEB128 n_inputs ; n_inputs × (write_field)
 ///   LEB128 n_outputs ; n_outputs × (write_field)
 ///   LEB128 n_ops ; n_ops × (write_op)
@@ -449,28 +463,59 @@ fn compute_digest(
     interventions: &[InterventionRecord],
 ) -> [u8; 32] {
     let mut hasher = ::blake3::Hasher::new();
-    hasher.update(b"vitnify-receipt v1\x00");
-    write_leb128(&mut hasher, inputs.len() as u64);
-    for f in inputs {
-        write_field(&mut hasher, f);
-    }
-    write_leb128(&mut hasher, outputs.len() as u64);
-    for f in outputs {
-        write_field(&mut hasher, f);
-    }
-    write_leb128(&mut hasher, ops.len() as u64);
-    for op in ops {
-        write_op(&mut hasher, op);
-    }
-    write_leb128(&mut hasher, activations.len() as u64);
-    for act in activations {
-        write_activation(&mut hasher, act);
-    }
-    write_leb128(&mut hasher, interventions.len() as u64);
-    for intv in interventions {
-        write_intervention(&mut hasher, intv);
-    }
+    hasher.update(b"vitnify-receipt v2\x00");
+    write_leb128(&mut hasher, REGIME.len() as u64);
+    hasher.update(REGIME.as_bytes());
+    write_sections(&mut hasher, inputs, outputs, ops, activations, interventions);
     *hasher.finalize().as_bytes()
+}
+
+/// Compute the FROZEN `vitnify-receipt v1` digest — the original format, with no
+/// regime binding. Retained so a receipt issued before v2 existed (including the
+/// published TinyLlama anchor `9c0754…`) stays reproducible; new receipts use v2.
+pub fn compute_digest_v1(
+    inputs: &[CertField],
+    outputs: &[CertField],
+    ops: &[OpRecord],
+    activations: &[ActivationRecord],
+    interventions: &[InterventionRecord],
+) -> [u8; 32] {
+    let mut hasher = ::blake3::Hasher::new();
+    hasher.update(b"vitnify-receipt v1\x00");
+    write_sections(&mut hasher, inputs, outputs, ops, activations, interventions);
+    *hasher.finalize().as_bytes()
+}
+
+/// The length-prefixed input/output/op/activation/intervention sections, identical
+/// between v1 and v2 — only the domain (and v2's regime prefix) differ.
+fn write_sections(
+    hasher: &mut ::blake3::Hasher,
+    inputs: &[CertField],
+    outputs: &[CertField],
+    ops: &[OpRecord],
+    activations: &[ActivationRecord],
+    interventions: &[InterventionRecord],
+) {
+    write_leb128(hasher, inputs.len() as u64);
+    for f in inputs {
+        write_field(hasher, f);
+    }
+    write_leb128(hasher, outputs.len() as u64);
+    for f in outputs {
+        write_field(hasher, f);
+    }
+    write_leb128(hasher, ops.len() as u64);
+    for op in ops {
+        write_op(hasher, op);
+    }
+    write_leb128(hasher, activations.len() as u64);
+    for act in activations {
+        write_activation(hasher, act);
+    }
+    write_leb128(hasher, interventions.len() as u64);
+    for intv in interventions {
+        write_intervention(hasher, intv);
+    }
 }
 
 /// Canonical-form serialization of one OpRecord into the digest.
@@ -660,17 +705,39 @@ mod tests {
 
     #[test]
     fn known_blake3_for_empty_cert() {
-        // Lock down the empty-cert digest so any change to the binding
-        // format is immediately visible. Computed by running
-        // BLAKE3("vitnify-receipt v1\x00" || 0x00 × 5) — five LEB128
-        // zeros for n_inputs=0, n_outputs=0, n_ops=0,
-        // n_activations=0, n_interventions=0 (v4 added the
-        // interventions section after v3's activations).
+        // Lock down the empty-cert digest so any change to the binding format is
+        // immediately visible. Shipped format is now v2:
+        // BLAKE3("vitnify-receipt v2\x00" || LEB128(|REGIME|) || REGIME || 0x00 × 5) —
+        // five LEB128 zeros for n_inputs/n_outputs/n_ops/n_activations/n_interventions.
         let cert = CertBuilder::new().finalize();
         assert!(cert.digest.iter().any(|&b| b != 0));
         // Stable across runs.
         let cert2 = CertBuilder::new().finalize();
         assert_eq!(cert.digest, cert2.digest);
+    }
+
+    #[test]
+    fn v2_digest_is_pinned_and_binds_regime() {
+        // A representative shipped-shape cert (I/O only, n_ops=0). Its v2 digest is
+        // PINNED: any change to the v2 binding format OR to REGIME moves it, which would
+        // silently invalidate every issued receipt — so it fails LOUDLY here instead.
+        // (Same pinned-hash discipline as matmul_reduction_bits_are_pinned.)
+        let mut b = CertBuilder::new();
+        b.declare_input("model_id", b"tinyllama");
+        b.declare_input("prompt_tokens", &[1u8, 0, 0, 0]);
+        b.declare_output("output_tokens", &[9u8, 0, 0, 0]);
+        let cert = b.finalize();
+        assert_eq!(
+            cert.digest_hex(),
+            "6d5f534cf69c441ba2832c6e63747a7989ccb5de9a2cc9dc528e5b8e0359cf1e",
+            "vitnify-receipt v2 binding or REGIME changed — this invalidates issued receipts"
+        );
+        // The regime binding must actually matter: the same fields under the FROZEN v1
+        // format produce a DIFFERENT digest, so a v1 and a v2 receipt for the same run
+        // are distinguishable.
+        let v1 = compute_digest_v1(&cert.inputs, &cert.outputs, &cert.ops,
+                                   &cert.activations, &cert.interventions);
+        assert_ne!(v1, cert.digest, "v2 digest must differ from v1 — regime is not bound");
     }
 
     // =====================================================================

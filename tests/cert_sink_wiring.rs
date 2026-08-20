@@ -100,7 +100,11 @@ fn digest_from_events(events: &[SinkEvent]) -> [u8; 32] {
     }
 
     let mut h = blake3::Hasher::new();
-    h.update(b"vitnify-receipt v1\x00");
+    // Shipped format is v2: the regime is bound immediately after the domain (mirrors
+    // cert::builder::compute_digest). This hand-rolled digest must track it.
+    h.update(b"vitnify-receipt v2\x00");
+    write_leb128(&mut h, vitni_tensor::cert::builder::REGIME.len() as u64);
+    h.update(vitni_tensor::cert::builder::REGIME.as_bytes());
     write_leb128(&mut h, inputs.len() as u64);
     for (n, b) in &inputs {
         write_leb128(&mut h, n.len() as u64);
