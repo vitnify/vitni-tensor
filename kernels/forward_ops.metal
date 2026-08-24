@@ -219,6 +219,30 @@ kernel void attention(
     }
 }
 
+// SwiGLU inner: silu(gate) * up, fused so `up` never leaves the GPU.
+kernel void silu_mul(
+    device const float* gate [[buffer(0)]],
+    device const float* up   [[buffer(1)]],
+    device       float* out  [[buffer(2)]],
+    constant     uint&  n    [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= n) return;
+    float g = gate[gid];
+    out[gid] = div_sw(g, 1.0f + vt_expf(-g)) * up[gid];
+}
+
+// Residual add, in place: x[i] += y[i]. (Plain add — matches the CPU.)
+kernel void add_inplace(
+    device       float* x [[buffer(0)]],
+    device const float* y [[buffer(1)]],
+    constant     uint&  n [[buffer(2)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= n) return;
+    x[gid] = x[gid] + y[gid];
+}
+
 // silu(x) = x / (1 + e^-x)
 kernel void silu_kernel(
     device const float* x   [[buffer(0)]],
