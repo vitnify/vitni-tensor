@@ -10,6 +10,16 @@
 use std::ffi::c_void;
 use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
 
+fn lcg_vec(len: usize, seed: u64) -> Vec<f32> {
+    let mut s = seed;
+    (0..len)
+        .map(|_| {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((s >> 33) as f32 / (1u32 << 31) as f32) * 2.0 - 1.0
+        })
+        .collect()
+}
+
 fn ord(x: f32) -> i64 {
     let b = x.to_bits();
     (if b & 0x8000_0000 != 0 { !b } else { b | 0x8000_0000 }) as i64
@@ -61,6 +71,28 @@ impl Gpu {
         cmd.wait_until_completed();
         let ptr = bo.contents() as *const f32;
         unsafe { std::slice::from_raw_parts(ptr, n) }.to_vec()
+    }
+    fn q4k(&self, x: &[f32], w: &[u8], m: usize, k: usize, nsuper: usize) -> Vec<f32> {
+        let shared = MTLResourceOptions::StorageModeShared;
+        let bx = self.device.new_buffer_with_data(x.as_ptr() as *const c_void, (x.len() * 4) as u64, shared);
+        let bw = self.device.new_buffer_with_data(w.as_ptr() as *const c_void, w.len() as u64, shared);
+        let bo = self.device.new_buffer((m * 4) as u64, shared);
+        let dims: [u32; 3] = [k as u32, m as u32, nsuper as u32];
+        let cmd = self.queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&self.pipeline);
+        enc.set_buffer(0, Some(&bx), 0);
+        enc.set_buffer(1, Some(&bw), 0);
+        enc.set_buffer(2, Some(&bo), 0);
+        enc.set_bytes(3, 12, dims.as_ptr() as *const c_void);
+        let tg = 64u64.min(m as u64).max(1);
+        let groups = (m as u64 + tg - 1) / tg;
+        enc.dispatch_thread_groups(MTLSize::new(groups, 1, 1), MTLSize::new(tg, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        let ptr = bo.contents() as *const f32;
+        unsafe { std::slice::from_raw_parts(ptr, m) }.to_vec()
     }
     fn div(&self, a: &[f32], b: &[f32]) -> Vec<f32> {
         let shared = MTLResourceOptions::StorageModeShared;
@@ -217,6 +249,64 @@ fn softdiv_cross_vendor(kernel_src: &str) {
     println!();
 }
 
+fn q4k_conformance(q4k_src: &str) {
+    let gpu = Gpu::new(q4k_src, "q4k_linear");
+    println!("== Q4_K fused dequant+dot: Metal vs canonical_dot_q4k_fused ==");
+    let shapes: &[(usize, usize, &str)] = &[
+        (256, 4, "1 super-block"),
+        (512, 4, "2 super-blocks"),
+        (2048, 8, "8 super-blocks"),
+        (8192, 2, "32 sb = 1 chunk exactly"),
+        (8448, 2, "33 sb -> 2 chunks"),
+        (14336, 4, "Mistral FFN K (56 sb)"),
+    ];
+    let mut fails = 0usize;
+    for &(k, m, label) in shapes {
+        let nsuper = k / 256;
+        let x = lcg_vec(k, 0xC0FFEE ^ (k as u64).wrapping_mul(0x9E3779B1));
+        let mut w = vec![0u8; m * nsuper * 144];
+        let mut s: u64 = 0x51CE_0000 ^ (k as u64).wrapping_mul(0x85EBCA77);
+        let mut nb = || {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (s >> 33) as u32
+        };
+        for byte in w.iter_mut() {
+            *byte = (nb() & 0xFF) as u8;
+        }
+        // Overwrite each block's d/dmin f16 with a small normal positive value
+        // (random f16 bits could be inf/NaN and complicate the comparison).
+        for i in 0..m {
+            for b in 0..nsuper {
+                let off = (i * nsuper + b) * 144;
+                let dbits = (((8 + (nb() % 6)) << 10) | (nb() & 0x3FF)) as u16;
+                let mbits = (((8 + (nb() % 6)) << 10) | (nb() & 0x3FF)) as u16;
+                w[off..off + 2].copy_from_slice(&dbits.to_le_bytes());
+                w[off + 2..off + 4].copy_from_slice(&mbits.to_le_bytes());
+            }
+        }
+        let mut cpu = vec![0f32; m];
+        for i in 0..m {
+            let wrow = &w[i * nsuper * 144..(i + 1) * nsuper * 144];
+            cpu[i] = vitni_tensor::ops::quant::canonical_dot_q4k_fused(&x, wrow, k).unwrap();
+        }
+        let g = gpu.q4k(&x, &w, m, k, nsuper);
+        let exact = cpu.iter().zip(&g).filter(|(c, gg)| c.to_bits() == gg.to_bits()).count();
+        let maxu = cpu.iter().zip(&g).map(|(c, gg)| ulp(*c, *gg)).max().unwrap_or(0);
+        let ok = exact == m;
+        println!(
+            "  [K={:>5} x{}] {:<28} exact {}/{}  maxULP {}  {}",
+            k, m, label, exact, m, maxu, if ok { "OK" } else { "FAIL" }
+        );
+        if !ok {
+            fails += 1;
+        }
+    }
+    println!(
+        "  VERDICT: Q4_K {}\n",
+        if fails == 0 { "PASS — bit-identical to the CPU hot path" } else { "FAIL" }
+    );
+}
+
 fn poly_isolation(kernel_src: &str) {
     let gpu = Gpu::new(kernel_src, "poly_kernel");
     let p1 = 1.6666625440e-1f32;
@@ -332,6 +422,7 @@ fn main() {
     division_diagnostic(kernel_src);
     softdiv_cross_vendor(kernel_src);
     poly_isolation(kernel_src);
+    q4k_conformance(include_str!("../../q4k.metal"));
 
     let inputs = build_inputs();
     println!("== expf conformance (Metal fast-math OFF vs libm::expf) ==");
