@@ -437,7 +437,15 @@ impl CertBuilder {
 /// "regime moved — cannot replay this receipt with this engine" instead of a silent
 /// hash mismatch that is indistinguishable from tampering. The format version
 /// (`v1`/`v2`) versions the wire layout; `REGIME` versions the arithmetic.
-pub const REGIME: &str = "vitni-regime-1";
+// regime-2 (2026-08): rms_norm, softmax, and attention (Q·K, A·V) moved from
+// serial accumulators to the crate's ONE canonical reduction (lane-pinned +
+// fixed tree), the same shape the matmul already used. This changed the forward
+// pass bits — every model digest moved — so the tag bumped. The matmul and
+// transcendental pins did NOT move (their reductions were already canonical).
+// This is the receipt regime tag; it is unrelated to the experimental reduction
+// *variant* names in `ops::quant` (canonical_dot_regime2 etc.), which are
+// test-only order references, not the shipped contract.
+pub const REGIME: &str = "vitni-regime-2";
 
 /// Compute the canonical BLAKE3 binding digest for the SHIPPED format,
 /// `vitnify-receipt v2`. Identical to v1 except the domain is `v2` and the numerical
@@ -729,7 +737,8 @@ mod tests {
         let cert = b.finalize();
         assert_eq!(
             cert.digest_hex(),
-            "6d5f534cf69c441ba2832c6e63747a7989ccb5de9a2cc9dc528e5b8e0359cf1e",
+            // Pinned under REGIME = "vitni-regime-2" (canonical rms/softmax/attention).
+            "e5e3e78f7f5ed99a867d464176a66a1af7727752ee7f30c813c6edd24d0b15a5",
             "vitnify-receipt v2 binding or REGIME changed — this invalidates issued receipts"
         );
         // The regime binding must actually matter: the same fields under the FROZEN v1

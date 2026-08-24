@@ -473,29 +473,43 @@ pub fn step_with_recorders(
 
         // ---- 1e. Multi-head attention with KV cache ----
         let mut xb_out = alloc::vec![0.0f32; dim];
+        // sqrt(head_size) is constant across t/heads — hoisted out (recomputing
+        // it per step was bit-identical, just wasteful). The score DIVIDE by it
+        // is kept as-is; only the reductions move to the canonical shape.
+        let sqrt_hd = libm::sqrtf(head_size as f32);
         for h in 0..n_heads {
             let q_off = h * head_size;
-            let mut att = alloc::vec![0.0f32; pos + 1];
-            for t in 0..=pos {
+            let tlen = pos + 1;
+            let mut att = alloc::vec![0.0f32; tlen];
+            for t in 0..tlen {
                 let k_off =
                     layer * cfg.seq_len * kv_dim + t * kv_dim + (h / kv_mul) * head_size;
-                let mut score = 0.0f32;
-                for d in 0..head_size {
-                    score += q_buf[q_off + d] * state.key_cache_mut()[k_off + d];
-                }
-                score /= libm::sqrtf(head_size as f32);
-                att[t] = score;
+                // Q·K via the crate's ONE canonical reduction (same lane+tree
+                // shape as the matmul): a contiguous dot over head_size.
+                let kslice = &state.key_cache_mut()[k_off..k_off + head_size];
+                let score = crate::ops::quant::canonical_dot(
+                    &q_buf[q_off..q_off + head_size],
+                    kslice,
+                    head_size,
+                );
+                att[t] = score / sqrt_hd;
             }
-            // Softmax across positions 0..=pos.
+            // Softmax across positions 0..=pos (canonical denominator inside).
             softmax_inplace(&mut att);
             let xb_off = h * head_size;
-            for t in 0..=pos {
-                let v_off =
-                    layer * cfg.seq_len * kv_dim + t * kv_dim + (h / kv_mul) * head_size;
-                let a = att[t];
-                for d in 0..head_size {
-                    xb_out[xb_off + d] += a * state.value_cache_mut()[v_off + d];
+            // A·V: out[d] = Σ_t att[t]·V[t][d]. The value column is strided by
+            // kv_dim across time, so gather it into a scratch buffer and reduce
+            // with the SAME canonical_dot — attention's time reduction now shares
+            // the one contract instead of a serial-over-time accumulator. Each
+            // (h,d) output is written exactly once, so assign (not accumulate).
+            let mut vcol = alloc::vec![0.0f32; tlen];
+            for d in 0..head_size {
+                for t in 0..tlen {
+                    let v_off =
+                        layer * cfg.seq_len * kv_dim + t * kv_dim + (h / kv_mul) * head_size;
+                    vcol[t] = state.value_cache_mut()[v_off + d];
                 }
+                xb_out[xb_off + d] = crate::ops::quant::canonical_dot(&att, &vcol, tlen);
             }
         }
 
@@ -929,11 +943,12 @@ fn softmax_inplace(x: &mut [f32]) {
             max = v;
         }
     }
-    let mut sum = 0.0f32;
     for v in x.iter_mut() {
         *v = libm::expf(*v - max);
-        sum += *v;
     }
+    // Denominator via the crate's ONE canonical reduction (lane-pinned + fixed
+    // tree), matching softmax_last_dim and the matmul shape — parallelizable.
+    let sum = crate::ops::quant::canonical_sum(x, x.len());
     let inv = 1.0 / sum;
     for v in x.iter_mut() {
         *v *= inv;

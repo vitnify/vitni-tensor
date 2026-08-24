@@ -1,0 +1,13 @@
+{
+  "regime": "vitni-regime-2",
+  "prompt_tokens": [1, 9038, 2501, 263, 931, 29892],
+  "n_new_tokens": 20,
+  "pins": {
+    "matmul_reduction": "0x8a428433686d13af"
+  },
+  "models": {
+    "tinyllama-1.1b-Q4_K_M": { "model_digest": "484689aacc389110b9d159b8488697472f2a913493e18c8f0f209a364e9cae5d", "model_digest_v1": "44b225df7fe5642ee4d56179db02389c7cabd7eceb6216302c5096e5e169c1f8", "tokens": [471, 263, 4123, 6114, 4257, 365, 2354, 29889, 365, 2354, 471, 263, 2924, 322, 9914, 10752, 29892, 2337, 3063, 363] },
+    "mistral-7b-Q4_K_M": { "model_digest": "467c1720fdd8beea06077574cbca2de51b45611b41056c636791c91e7b207844", "model_digest_v1": "dd79aad48472f1e2538cb88a23cb37774ce4c96b5ce161b8eb6ca3ff45e51c60", "tokens": [13, 13, 13940, 28832, 13, 1510, 263, 931, 13, 13940, 28832, 13, 13, 1064, 28705, 29892, 29095, 13, 13, 13940] },
+    "qwen2.5-0.5b-Q4_K_M": { "model_digest": "2a58eade72c5dab5239c0c2a5603645df7f784eb969a4c13024a7b3ed4e6a2ea", "model_digest_v1": "031c48bfe69f23ddab9f09c6d1f28eb26e2f79c3f25c3ef36d2e3314a207f91e", "tokens": [4102, 4102, 15, 13, 16, 13, 15, 4102, 4102, 17, 15, 16, 21, 12, 15, 19, 12, 16, 19, 4102] }
+  }
+}

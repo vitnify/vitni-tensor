@@ -573,6 +573,57 @@ pub fn canonical_combine(chunk_sums: &mut [f32]) -> f32 {
     fixed_tree(chunk_sums)
 }
 
+/// One chunk of a canonical SUM: `Σ x[i]` in the exact lane+tree shape of
+/// [`canonical_chunk`] with the weight fixed at 1.0. Multiplying an f32 by
+/// `1.0` is exact, so this is bit-identical to `canonical_chunk(x, &[1.0; n])`
+/// — proven by `canonical_sum_equals_dot_with_ones`.
+#[inline]
+fn canonical_chunk_sum(x: &[f32]) -> f32 {
+    let n = x.len();
+    let mut lanes = [0.0f32; CANON_LANES];
+    let full = n - (n % CANON_LANES);
+    let mut i = 0;
+    while i < full {
+        for j in 0..CANON_LANES {
+            lanes[j] += x[i + j];
+        }
+        i += CANON_LANES;
+    }
+    while i < n {
+        let j = i % CANON_LANES;
+        lanes[j] += x[i];
+        i += 1;
+    }
+    fixed_tree(&mut lanes)
+}
+
+/// Canonical reduction of a plain sum `Σ x[i]` — the same fixed lane+tree
+/// shape as [`canonical_dot`], so softmax/rms/attention share the ONE
+/// numerical contract the matmul reduction already uses. Bit-identical to
+/// `canonical_dot(x, &[1.0; n], n)` but without materialising the ones.
+pub(crate) fn canonical_sum(x: &[f32], n: usize) -> f32 {
+    if n == 0 {
+        return 0.0;
+    }
+    if n <= CANON_CHUNK {
+        return canonical_chunk_sum(&x[..n]);
+    }
+    let nchunks = (n + CANON_CHUNK - 1) / CANON_CHUNK;
+    let mut sums = alloc::vec![0.0f32; nchunks];
+    for c in 0..nchunks {
+        let s = c * CANON_CHUNK;
+        let e = core::cmp::min(s + CANON_CHUNK, n);
+        sums[c] = canonical_chunk_sum(&x[s..e]);
+    }
+    fixed_tree(&mut sums)
+}
+
+/// Public wrapper — the canonical sum is part of the numerical contract, so
+/// any certified path (e.g. a GPU backend's softmax/rms reduction) can reach it.
+pub fn canonical_sum_pub(x: &[f32], n: usize) -> f32 {
+    canonical_sum(x, n)
+}
+
 // A distinct reduction order (blocked, not the pinned 8-deep chain), kept ONLY as a
 // test reference: `v2_reduction_order_differs_from_v1` uses it to prove the reduction
 // order is load-bearing. Scoped to tests so it is never mistaken for a live kernel.
@@ -1583,6 +1634,32 @@ mod tests {
     const PINNED_V2_REFERENCE: u32 = 0x40ce_39e1;
 
     use super::*;
+
+    #[test]
+    fn canonical_sum_equals_dot_with_ones() {
+        // canonical_sum must be the EXACT same lane+tree shape as canonical_dot
+        // with a ones weight — that equivalence is what lets rms/softmax/attention
+        // share the one reduction contract. Multiply by 1.0 is exact, so this is
+        // bit-for-bit, not within-tolerance. Exercise several sizes incl. a tail
+        // and a value that crosses a chunk boundary.
+        for &n in &[0usize, 1, 7, 8, 9, 31, 8192, 8193, 20001] {
+            let mut s: u64 = 0xC0FFEE;
+            let x: alloc::vec::Vec<f32> = (0..n)
+                .map(|_| {
+                    s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    ((s >> 33) as f32 / (1u32 << 31) as f32) * 2.0 - 1.0
+                })
+                .collect();
+            let ones = alloc::vec![1.0f32; n];
+            let via_dot = canonical_dot(&x, &ones, n);
+            let via_sum = canonical_sum(&x, n);
+            assert_eq!(
+                via_sum.to_bits(),
+                via_dot.to_bits(),
+                "canonical_sum diverged from canonical_dot(·, ones) at n={n}"
+            );
+        }
+    }
 
     #[test]
     fn q4_0_roundtrip_smooth_weights_error_bound() {

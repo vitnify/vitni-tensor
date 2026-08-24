@@ -93,11 +93,12 @@ pub(crate) fn rms_norm_slice(x: &Tensor, ws: &[f32], eps: f32) -> Result<Tensor>
     let mut out = alloc::vec![0.0f32; xs.len()];
     for r in 0..rows {
         let row = &xs[r * feat..(r + 1) * feat];
-        // mean(x^2) — fixed-order accumulation for cross-vendor determinism.
-        let mut sumsq = 0.0f32;
-        for &v in row {
-            sumsq += v * v;
-        }
+        // mean(x^2) via the crate's ONE canonical reduction (lane-pinned +
+        // fixed tree) — the same shape the matmul uses. sum(x*x) == dot(x, x),
+        // so this is a `canonical_dot` of the row with itself: bit-identical
+        // across vector width / thread count / GPU, and parallelizable (unlike
+        // the serial accumulator it replaced, which pinned it to one thread).
+        let sumsq = crate::ops::quant::canonical_dot(row, row, feat);
         let mean = sumsq / feat as f32;
         let scale = 1.0 / libm::sqrtf(mean + eps);
 

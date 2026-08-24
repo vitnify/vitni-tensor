@@ -5,6 +5,34 @@ This project follows [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+**REGIME BUMP `vitni-regime-1` → `vitni-regime-2`: one reduction contract for the
+whole forward pass.** `rms_norm`, `softmax`, and attention (Q·K, A·V) computed
+their reductions with serial accumulators — a fixed order, but one that pinned
+each row to a single thread and was a *different* shape from the canonical
+lane+tree reduction the matmul already used. They now all route through the ONE
+canonical reduction (`ops::quant::canonical_dot` / new `canonical_sum`): the same
+`i % 8` lane assignment + fixed pairwise tree, bit-identical across thread count
+and vector width, and parallelizable. This changed the forward-pass bits, so
+every model digest moved and the receipt `REGIME` tag bumped — a v2 receipt
+issued under regime-1 is now cryptographically distinguishable from one under
+regime-2 (the tag's whole purpose). Generated tokens did NOT move (the change is
+below the argmax margin), so behavior is unchanged.
+
+- **`ops::quant::canonical_sum`** (+ `canonical_sum_pub`): the canonical reduction
+  for a plain `Σ x[i]`, bit-identical to `canonical_dot(x, [1.0; n])` — proven by
+  `canonical_sum_equals_dot_with_ones`. Softmax denominators use it.
+- **The matmul and transcendental pins did NOT move** (`0x8a428433686d13af` and the
+  transcendental hash): those reductions were already canonical. Only the three
+  serial ops changed.
+- **GPU parity re-verified:** `kernels/forward_ops.metal` (`rms_kernel`,
+  `softmax_kernel`, `attention`) rewritten to the same lane+tree shape; the full
+  TinyLlama forward on Apple GPU reproduces the CPU certificate digest under
+  regime-2 (`metal_certificate_matches_cpu`).
+- **`src/bin/gen-anchors.rs` + `regime-manifest.json`:** a single-source-of-truth
+  generator that recomputes every anchor (matmul pin, per-model digests) in one
+  command — so a future regime change is a regenerate, not a hand-sync across
+  tests, spec, and paper.
+
 **Deterministic GPU matmul, proven — the reproducible path is no longer CPU-only.**
 The `SYS_GPU_MATMUL` seam existed (`accel::Accelerator`) but had no conforming
 kernel to point a GPU impl at. Added the reference kernels and their proof.

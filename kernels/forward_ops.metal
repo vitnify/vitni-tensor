@@ -2,12 +2,27 @@
 using namespace metal;
 
 // ===================================================================
-// Forward-pass reduction ops: rms_norm, softmax, silu — cross-vendor
+// Forward-pass reduction ops: rms_norm, softmax, attention — cross-vendor
 // bit-identical to vitni_tensor's CPU ops. Built from the proven primitives
-// (software division, expf) plus serial reductions in the CPU's exact order.
-// Compile with fastMathEnabled=false; every fused a±b*c site is guarded.
-// Helpers are copied from expf.metal (kept in sync by the conformance tests).
+// (software division, expf) plus the CANONICAL reduction (regime-2): the
+// same lane-pinned + fixed-tree shape ops::quant::canonical_dot uses, so a
+// reduction is bit-identical regardless of thread count or vector width AND
+// exposes lane parallelism (the serial accumulators these replaced pinned
+// each row to one thread). Compile with fastMathEnabled=false; every fused
+// a±b*c site is guarded. Helpers copied from expf.metal (conformance-synced).
 // ===================================================================
+
+// Fixed pairwise tree over CANON_LANES=8 lanes — bit-identical to
+// ops::matmul::fixed_tree for n=8: ((l0+l1)+(l2+l3))+((l4+l5)+(l6+l7)).
+static inline float ftree8(thread float* lane) {
+    float t0 = lane[0] + lane[1];
+    float t1 = lane[2] + lane[3];
+    float t2 = lane[4] + lane[5];
+    float t3 = lane[6] + lane[7];
+    float u0 = t0 + t1;
+    float u1 = t2 + t3;
+    return u0 + u1;
+}
 
 static inline float vt_scalbnf(float x, int n) {
     float f_exp_max     = as_type<float>((uint)254u << 23);
@@ -106,11 +121,23 @@ kernel void rms_kernel(
     uint feat = dims[0], rows = dims[1];
     if (gid >= rows) return;
     device const float* row = x + (ulong)gid * feat;
-    float sumsq = 0.0f;
-    for (uint i = 0u; i < feat; i++) {
-        float p = row[i] * row[i]; // named product (matmul-safe += pattern)
-        sumsq += p;
+    // sum(x*x) via the canonical lane+tree shape == canonical_dot(row, row).
+    // feat (model dim) < CANON_CHUNK=8192, so a single chunk is bit-exact.
+    float lane[8] = {0,0,0,0,0,0,0,0};
+    uint full = feat - (feat % 8u);
+    uint i = 0u;
+    for (; i < full; i += 8u) {
+        for (uint j = 0u; j < 8u; j++) {
+            float p = row[i + j] * row[i + j]; // named product (no FMA contraction)
+            lane[j] += p;
+        }
     }
+    for (; i < feat; i++) {
+        uint j = i % 8u;
+        float p = row[i] * row[i];
+        lane[j] += p;
+    }
+    float sumsq = ftree8(lane);
     float mean = div_sw(sumsq, (float)feat);
     float scale = div_sw(1.0f, sqrt(mean + eps));
     device float* orow = out + (ulong)gid * feat;
@@ -133,14 +160,16 @@ kernel void softmax_kernel(
     device float* orow = out + (ulong)gid * last;
     float mx = -INFINITY;
     for (uint i = 0u; i < last; i++) { if (row[i] > mx) mx = row[i]; }
-    float sum = 0.0f;
-    for (uint i = 0u; i < last; i++) {
-        float e = vt_expf(row[i] - mx);
-        orow[i] = e;
-        sum += e;
-    }
+    for (uint i = 0u; i < last; i++) { orow[i] = vt_expf(row[i] - mx); }
+    // denominator via canonical lane+tree sum (== canonical_sum on CPU).
+    float lane[8] = {0,0,0,0,0,0,0,0};
+    uint full = last - (last % 8u);
+    uint i = 0u;
+    for (; i < full; i += 8u) { for (uint j = 0u; j < 8u; j++) lane[j] += orow[i + j]; }
+    for (; i < last; i++) { lane[i % 8u] += orow[i]; }
+    float sum = ftree8(lane);
     float inv = div_sw(1.0f, sum);
-    for (uint i = 0u; i < last; i++) { orow[i] = orow[i] * inv; }
+    for (uint k = 0u; k < last; k++) { orow[k] = orow[k] * inv; }
 }
 
 // RoPE apply: (a,b) -> (a*c - b*s, a*s + b*c), reading a CPU-precomputed
@@ -173,10 +202,11 @@ kernel void rope_apply(
 }
 
 // Multi-head attention with KV cache, one thread per query head. Matches the
-// CPU forward's PLAIN serial reductions (not the canonical lane/tree): serial
-// Q.K dot, /sqrt(head_size), serial softmax, serial A.V accumulation over t.
-// GQA: query head h reads kv head h/kv_mul. Caps context at 512 positions
-// (enough for the conformance driver; raise if needed).
+// CPU forward's CANONICAL reductions (regime-2): Q.K via canonical_dot over
+// head_size, /sqrt(head_size), canonical-sum softmax, and A.V as a canonical
+// reduction over time per output dim. GQA: query head h reads kv head h/kv_mul.
+// Caps context at 512 positions (< CANON_CHUNK=8192, so single-chunk canonical
+// is bit-exact; raise the tile + add chunking for longer context).
 kernel void attention(
     device const float* q      [[buffer(0)]],  // [n_heads*head_size], this token, post-rope
     device const float* kcache [[buffer(1)]],  // [(pos+1)*kv_dim] for this layer
@@ -190,32 +220,55 @@ kernel void attention(
     float scores[512];
     uint qoff = h * head_size;
     uint kvhead = h / kv_mul;
-    float rsqrt_hs = sqrt((float)head_size);
-    for (uint t = 0u; t <= pos; t++) {
+    float sqrt_hs = sqrt((float)head_size);
+    uint tlen = pos + 1u;
+    // Q.K: canonical_dot over head_size (head_size < CANON_CHUNK).
+    for (uint t = 0u; t < tlen; t++) {
         uint koff = t * kv_dim + kvhead * head_size;
-        float sc = 0.0f;
-        for (uint dd = 0u; dd < head_size; dd++) {
-            float p = q[qoff + dd] * kcache[koff + dd]; // plain serial dot (named product)
-            sc += p;
+        float lane[8] = {0,0,0,0,0,0,0,0};
+        uint full = head_size - (head_size % 8u);
+        uint dd = 0u;
+        for (; dd < full; dd += 8u) {
+            for (uint j = 0u; j < 8u; j++) {
+                float p = q[qoff + dd + j] * kcache[koff + dd + j];
+                lane[j] += p;
+            }
         }
-        scores[t] = div_sw(sc, rsqrt_hs); // score / sqrt(head_size)
+        for (; dd < head_size; dd++) { uint j = dd % 8u; float p = q[qoff + dd] * kcache[koff + dd]; lane[j] += p; }
+        scores[t] = div_sw(ftree8(lane), sqrt_hs); // score / sqrt(head_size)
     }
-    // serial softmax (== softmax_inplace)
+    // softmax over time: max, exp, canonical-sum denominator (== softmax_inplace).
     float mx = -INFINITY;
-    for (uint t = 0u; t <= pos; t++) { if (scores[t] > mx) mx = scores[t]; }
-    float sum = 0.0f;
-    for (uint t = 0u; t <= pos; t++) { float e = vt_expf(scores[t] - mx); scores[t] = e; sum += e; }
-    float inv = div_sw(1.0f, sum);
-    for (uint t = 0u; t <= pos; t++) { scores[t] = scores[t] * inv; }
-    // serial A.V (t outer, accumulate into xbout[d])
-    for (uint dd = 0u; dd < head_size; dd++) xbout[qoff + dd] = 0.0f;
-    for (uint t = 0u; t <= pos; t++) {
-        uint voff = t * kv_dim + kvhead * head_size;
-        float a = scores[t];
-        for (uint dd = 0u; dd < head_size; dd++) {
-            float p = a * vcache[voff + dd]; // named product
-            xbout[qoff + dd] += p;
+    for (uint t = 0u; t < tlen; t++) { if (scores[t] > mx) mx = scores[t]; }
+    for (uint t = 0u; t < tlen; t++) { scores[t] = vt_expf(scores[t] - mx); }
+    {
+        float lane[8] = {0,0,0,0,0,0,0,0};
+        uint full = tlen - (tlen % 8u);
+        uint t = 0u;
+        for (; t < full; t += 8u) { for (uint j = 0u; j < 8u; j++) lane[j] += scores[t + j]; }
+        for (; t < tlen; t++) lane[t % 8u] += scores[t];
+        float inv = div_sw(1.0f, ftree8(lane));
+        for (uint k = 0u; k < tlen; k++) scores[k] = scores[k] * inv;
+    }
+    // A.V: for each output dim, canonical_dot over time of scores[t]·V[t][d]
+    // (value column strided by kv_dim). Written once per (h,d) — assign, not +=.
+    for (uint dd = 0u; dd < head_size; dd++) {
+        float lane[8] = {0,0,0,0,0,0,0,0};
+        uint full = tlen - (tlen % 8u);
+        uint t = 0u;
+        for (; t < full; t += 8u) {
+            for (uint j = 0u; j < 8u; j++) {
+                uint voff = (t + j) * kv_dim + kvhead * head_size;
+                float p = scores[t + j] * vcache[voff + dd];
+                lane[j] += p;
+            }
         }
+        for (; t < tlen; t++) {
+            uint voff = t * kv_dim + kvhead * head_size;
+            float p = scores[t] * vcache[voff + dd];
+            lane[t % 8u] += p;
+        }
+        xbout[qoff + dd] = ftree8(lane);
     }
 }
 

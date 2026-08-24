@@ -53,14 +53,14 @@ pub(crate) fn softmax_last_dim(t: &Tensor) -> Result<Tensor> {
             }
         }
 
-        // exp + sum
-        let mut sum = 0.0f32;
+        // exp, then the denominator via the crate's ONE canonical reduction
+        // (lane-pinned + fixed tree, same shape as the matmul) instead of a
+        // serial accumulator — bit-identical cross-vendor and parallelizable.
         let out_row = &mut out[r * last..(r + 1) * last];
         for (i, &v) in row.iter().enumerate() {
-            let e = libm::expf(v - mx);
-            out_row[i] = e;
-            sum += e;
+            out_row[i] = libm::expf(v - mx);
         }
+        let sum = crate::ops::quant::canonical_sum(out_row, last);
 
         // normalize
         let inv = 1.0 / sum;
