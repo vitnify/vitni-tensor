@@ -325,6 +325,47 @@ fn softdiv_cross_vendor(kernel_src: &str) {
     println!();
 }
 
+fn q6k_conformance(q6k_src: &str) {
+    let gpu = Gpu::new(q6k_src, "q6k_linear");
+    println!("== Q6_K fused dequant+dot: Metal vs canonical_dot_q6k_fused ==");
+    let shapes: &[(usize, usize, &str)] = &[
+        (256, 4, "1 super-block"),
+        (512, 4, "2 super-blocks"),
+        (2048, 8, "8 super-blocks"),
+        (8192, 2, "32 sb = 1 chunk"),
+        (8448, 2, "33 sb -> 2 chunks"),
+        (5632, 4, "TinyLlama hidden (22 sb)"),
+    ];
+    let mut fails = 0usize;
+    for &(k, m, label) in shapes {
+        let nsuper = k / 256;
+        let x = lcg_vec(k, 0xD6C0 ^ (k as u64).wrapping_mul(0x9E3779B1));
+        let mut w = vec![0u8; m * nsuper * 210];
+        let mut s: u64 = 0x6C6E_0000 ^ (k as u64).wrapping_mul(0x85EBCA77);
+        let mut nb = || { s = s.wrapping_mul(6364136223846793005).wrapping_add(1); (s >> 33) as u32 };
+        for byte in w.iter_mut() { *byte = (nb() & 0xFF) as u8; }
+        for i in 0..m {
+            for b in 0..nsuper {
+                let off = (i * nsuper + b) * 210;
+                let dbits = (((8 + (nb() % 6)) << 10) | (nb() & 0x3FF)) as u16;
+                w[off + 208..off + 210].copy_from_slice(&dbits.to_le_bytes());
+            }
+        }
+        let mut cpu = vec![0f32; m];
+        for i in 0..m {
+            let wrow = &w[i * nsuper * 210..(i + 1) * nsuper * 210];
+            cpu[i] = vitni_tensor::ops::quant::canonical_dot_q6k_fused(&x, wrow, k).unwrap();
+        }
+        let g = gpu.q4k(&x, &w, m, k, nsuper); // generic dispatch runs q6k_linear
+        let exact = cpu.iter().zip(&g).filter(|(c, gg)| c.to_bits() == gg.to_bits()).count();
+        let maxu = cpu.iter().zip(&g).map(|(c, gg)| ulp(*c, *gg)).max().unwrap_or(0);
+        let ok = exact == m;
+        println!("  [K={:>5} x{}] {:<26} exact {}/{}  maxULP {}  {}", k, m, label, exact, m, maxu, if ok { "OK" } else { "FAIL" });
+        if !ok { fails += 1; }
+    }
+    println!("  VERDICT: Q6_K {}\n", if fails == 0 { "PASS — bit-identical to the CPU hot path" } else { "FAIL" });
+}
+
 fn forward_ops_conformance(src: &str) {
     let bitcmp = |a: &[f32], b: &[f32]| -> (usize, i64) {
         let exact = a.iter().zip(b).filter(|(c, g)| c.to_bits() == g.to_bits()).count();
@@ -582,7 +623,31 @@ fn build_inputs() -> Vec<f32> {
     v
 }
 
+fn dump_gguf_types() {
+    use vitni_tensor::model::{config::Config, gguf::GgufFile, quant_weights::{QuantTensor, QuantizedWeights}};
+    let path = "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf";
+    let blob = std::fs::read(path).expect("read gguf");
+    let gguf = GgufFile::parse(&blob).unwrap();
+    let cfg = Config::from_gguf(&gguf).unwrap();
+    let w = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+    use std::collections::BTreeMap;
+    let mut hist: BTreeMap<String, usize> = BTreeMap::new();
+    let mut add = |t: &QuantTensor| { *hist.entry(format!("{:?}", t.dtype)).or_default() += 1; };
+    add(&w.token_embedding_table);
+    if let Some(ref c) = w.wcls { add(c); }
+    for l in &w.layers { add(&l.wq); add(&l.wk); add(&l.wv); add(&l.wo); add(&l.w1); add(&l.w2); add(&l.w3); }
+    println!("== TinyLlama GGUF ==");
+    println!("  config: dim={} hidden={} layers={} heads={} kv_heads={} vocab={}",
+        cfg.dim, cfg.hidden_dim, cfg.n_layers, cfg.n_heads, cfg.n_kv_heads, cfg.vocab_size);
+    println!("  head_size={} kv_dim={}", cfg.head_size(), cfg.kv_dim());
+    println!("  quant type histogram (weight tensors): {:?}", hist);
+    println!("  wcls(lm_head) present: {} | embed dtype: {:?}", w.wcls.is_some(), w.token_embedding_table.dtype);
+    println!("  rope_neox: {}  rope_theta: {}  rms_eps: {}", w.rope_neox, w.rope_theta, w.rms_eps);
+    println!();
+}
+
 fn main() {
+    dump_gguf_types();
     let kernel_src = include_str!("../../expf.metal");
     let device = Device::system_default().expect("no Metal device");
     println!("== device ==\n  {}\n", device.name());
@@ -591,6 +656,7 @@ fn main() {
     softdiv_cross_vendor(kernel_src);
     poly_isolation(kernel_src);
     q4k_conformance(include_str!("../../q4k.metal"));
+    q6k_conformance(include_str!("../../q6k.metal"));
     forward_ops_conformance(include_str!("../../forward_ops.metal"));
 
     let inputs = build_inputs();
