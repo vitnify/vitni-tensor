@@ -1,0 +1,32 @@
+[package]
+name = "vitni-tensor-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Own workspace: keep the fuzz crate (which needs sanitizer/build flags) out of the
+# engine's empty root [workspace], so a plain `cargo build` there never trips on it.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.vitni-tensor]
+path = ".."
+
+[[bin]]
+name = "gguf_parse"
+path = "fuzz_targets/gguf_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gguf_config"
+path = "fuzz_targets/gguf_config.rs"
+test = false
+doc = false
+bench = false

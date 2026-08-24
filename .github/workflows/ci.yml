@@ -54,3 +54,29 @@ jobs:
       # need a GGUF checkpoint that is not in CI, so they are intentionally skipped.
       - name: GGUF fuzz tests
         run: cargo test --release --test gguf_fuzz
+
+  fuzz:
+    name: fuzz smoke (GGUF parser, libFuzzer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # cargo-fuzz needs nightly (libFuzzer sanitizer flags). This job is separate from
+      # the stable build/test job above so the crate itself still ships on stable.
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Coverage-guided smoke over the UNTRUSTED-input surface: any panic, OOB read,
+      # overflow, or OOM on a mutated input fails the build. A longer nightly run gives
+      # depth (see fuzz/README.md); ~1 min each is enough to catch a regression in the
+      # parser or in Config derivation (e.g. a divide-by-zero on hostile n_heads).
+      - name: Fuzz gguf_parse (smoke)
+        run: cargo fuzz run gguf_parse  -- -max_total_time=60 -max_len=262144 -rss_limit_mb=2048
+      - name: Fuzz gguf_config (smoke)
+        run: cargo fuzz run gguf_config -- -max_total_time=60 -max_len=262144 -rss_limit_mb=2048
