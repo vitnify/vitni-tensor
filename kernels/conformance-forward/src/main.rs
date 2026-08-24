@@ -72,6 +72,44 @@ fn dump_golden(path: &str) {
     vitni_tensor::ops::quant::linear_q6_k_integer(&xd, l0.w2.bytes, &mut yd, 1, cfg.hidden_dim, cfg.dim).unwrap();
     push_case(&mut body, &mut cases, 5, [cfg.hidden_dim as u32, cfg.dim as u32, (cfg.hidden_dim / 256) as u32, 0], &xd, l0.w2.bytes, &yd);
 
+    // rms_norm (regime-2 canonical): x[feat*rows] in `inp`, weight[feat] in `w` as
+    // f32 LE bytes, eps bits in p[2]. CPU ref is the engine's canonical rms_norm.
+    use vitni_tensor::{Shape, Tensor};
+    for &(rows, feat) in &[(2usize, 2048usize), (3usize, 4096usize)] {
+        let x = lcg_vec(rows * feat, 0x2000 ^ feat as u64);
+        let wv = lcg_vec(feat, 0x3000 ^ feat as u64);
+        let xt = Tensor::from_f32(x.clone(), Shape::new(&[rows, feat]).unwrap()).unwrap();
+        let wt = Tensor::from_f32(wv.clone(), Shape::new(&[feat]).unwrap()).unwrap();
+        let eps = 1e-5f32;
+        let cpu = tvec(&xt.rms_norm(&wt, eps).unwrap());
+        let mut wbytes = Vec::new();
+        for v in &wv { wbytes.extend_from_slice(&v.to_le_bytes()); }
+        push_case(&mut body, &mut cases, 6, [feat as u32, rows as u32, eps.to_bits(), 0], &x, &wbytes, &cpu);
+    }
+    // softmax (regime-2 canonical): x[last*rows]. CPU ref is engine softmax_last_dim.
+    for &(rows, last) in &[(2usize, 4096usize), (32usize, 151usize)] {
+        let x = lcg_vec(rows * last, 0x4000 ^ last as u64);
+        let xt = Tensor::from_f32(x.clone(), Shape::new(&[rows, last]).unwrap()).unwrap();
+        let cpu = tvec(&xt.softmax_last_dim().unwrap());
+        push_case(&mut body, &mut cases, 7, [last as u32, rows as u32, 0, 0], &x, &[], &cpu);
+    }
+    // attention (regime-2 canonical, GQA): inp = q ++ kcache ++ vcache;
+    // p3 = (kv_mul<<16)|pos. CPU ref is attention_cpu (canonical). TinyLlama GQA:
+    // 32 q heads, 4 kv heads (kv_mul=8), head_size 64 -> kv_dim 256; pos 25 (tail path).
+    {
+        let (n_heads, head_size, kv_mul, pos) = (32usize, 64usize, 8usize, 25usize);
+        let kv_dim = (n_heads / kv_mul) * head_size;
+        let q = lcg_vec(n_heads * head_size, 0x8A11);
+        let kc = lcg_vec((pos + 1) * kv_dim, 0x8A22);
+        let vc = lcg_vec((pos + 1) * kv_dim, 0x8A33);
+        let cpu = attention_cpu(&q, &kc, &vc, n_heads, head_size, kv_dim, kv_mul, pos);
+        let mut inp = q.clone();
+        inp.extend_from_slice(&kc);
+        inp.extend_from_slice(&vc);
+        let p3 = ((kv_mul as u32) << 16) | pos as u32;
+        push_case(&mut body, &mut cases, 8, [n_heads as u32, head_size as u32, kv_dim as u32, p3], &inp, &[], &cpu);
+    }
+
     out.extend_from_slice(&0x564E_5447u32.to_le_bytes()); // "VNTG"
     out.extend_from_slice(&cases.to_le_bytes());
     out.extend_from_slice(&body);

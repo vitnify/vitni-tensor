@@ -144,6 +144,76 @@ __global__ void k_q6k_int(const float* x, const unsigned char* w, float* out, un
     out[gid] = fixed_tree(parts, nsuper);
 }
 
+// rms_norm (regime-2): out = (x / sqrt(mean(x^2)+eps)) * w, canonical sumsq.
+// One thread per row; feat < CANON_CHUNK so a single 8-lane chunk is exact.
+__global__ void k_rms(const float* x, const float* wt, float* out, unsigned feat, unsigned rows, float eps) {
+    unsigned gid = blockIdx.x * blockDim.x + threadIdx.x; if (gid >= rows) return;
+    const float* row = x + (size_t)gid * feat;
+    float lanes[8]; for (int j = 0; j < 8; j++) lanes[j] = 0.0f;
+    unsigned full = feat - (feat % 8u), i = 0u;
+    for (; i < full; i += 8u) for (unsigned j = 0u; j < 8u; j++) { float p = row[i + j] * row[i + j]; lanes[j] += p; }
+    for (; i < feat; i++) { unsigned j = i % 8u; float p = row[i] * row[i]; lanes[j] += p; }
+    float l[8]; for (int j = 0; j < 8; j++) l[j] = lanes[j];
+    float sumsq = fixed_tree(l, 8u);
+    float mean = div_sw(sumsq, (float)feat);
+    float scale = div_sw(1.0f, sqrtf(mean + eps));
+    float* orow = out + (size_t)gid * feat;
+    for (unsigned k = 0u; k < feat; k++) { float t = row[k] * scale; orow[k] = t * wt[k]; }
+}
+
+// softmax over the last dim, one thread per row. Canonical-sum denominator.
+__global__ void k_softmax(const float* x, float* out, unsigned last, unsigned rows) {
+    unsigned gid = blockIdx.x * blockDim.x + threadIdx.x; if (gid >= rows) return;
+    const float* row = x + (size_t)gid * last; float* orow = out + (size_t)gid * last;
+    float mx = -INFINITY; for (unsigned i = 0u; i < last; i++) { if (row[i] > mx) mx = row[i]; }
+    for (unsigned i = 0u; i < last; i++) orow[i] = vt_expf(row[i] - mx);
+    float lanes[8]; for (int j = 0; j < 8; j++) lanes[j] = 0.0f;
+    unsigned full = last - (last % 8u), i = 0u;
+    for (; i < full; i += 8u) for (unsigned j = 0u; j < 8u; j++) lanes[j] += orow[i + j];
+    for (; i < last; i++) lanes[i % 8u] += orow[i];
+    float l[8]; for (int j = 0; j < 8; j++) l[j] = lanes[j];
+    float inv = div_sw(1.0f, fixed_tree(l, 8u));
+    for (unsigned k = 0u; k < last; k++) orow[k] = orow[k] * inv;
+}
+
+// Multi-head attention (GQA + KV cache), one thread per query head. All three
+// reductions (Q.K, softmax denom, A.V) are the canonical 8-lane+tree shape.
+__global__ void k_attention(const float* q, const float* kc, const float* vc, float* xbout,
+                            unsigned n_heads, unsigned head_size, unsigned kv_dim, unsigned kv_mul, unsigned pos) {
+    unsigned h = blockIdx.x * blockDim.x + threadIdx.x; if (h >= n_heads) return;
+    float scores[512];
+    unsigned qoff = h * head_size, kvhead = h / kv_mul; float sqrt_hs = sqrtf((float)head_size);
+    unsigned tlen = pos + 1u;
+    for (unsigned t = 0u; t < tlen; t++) {
+        unsigned koff = t * kv_dim + kvhead * head_size;
+        float lanes[8]; for (int j = 0; j < 8; j++) lanes[j] = 0.0f;
+        unsigned full = head_size - (head_size % 8u), dd = 0u;
+        for (; dd < full; dd += 8u) for (unsigned j = 0u; j < 8u; j++) { float p = q[qoff + dd + j] * kc[koff + dd + j]; lanes[j] += p; }
+        for (; dd < head_size; dd++) { unsigned j = dd % 8u; float p = q[qoff + dd] * kc[koff + dd]; lanes[j] += p; }
+        float l[8]; for (int j = 0; j < 8; j++) l[j] = lanes[j];
+        scores[t] = div_sw(fixed_tree(l, 8u), sqrt_hs);
+    }
+    float mx = -INFINITY; for (unsigned t = 0u; t < tlen; t++) { if (scores[t] > mx) mx = scores[t]; }
+    for (unsigned t = 0u; t < tlen; t++) scores[t] = vt_expf(scores[t] - mx);
+    {
+        float lanes[8]; for (int j = 0; j < 8; j++) lanes[j] = 0.0f;
+        unsigned full = tlen - (tlen % 8u), t = 0u;
+        for (; t < full; t += 8u) for (unsigned j = 0u; j < 8u; j++) lanes[j] += scores[t + j];
+        for (; t < tlen; t++) lanes[t % 8u] += scores[t];
+        float l[8]; for (int j = 0; j < 8; j++) l[j] = lanes[j];
+        float inv = div_sw(1.0f, fixed_tree(l, 8u));
+        for (unsigned k = 0u; k < tlen; k++) scores[k] = scores[k] * inv;
+    }
+    for (unsigned dd = 0u; dd < head_size; dd++) {
+        float lanes[8]; for (int j = 0; j < 8; j++) lanes[j] = 0.0f;
+        unsigned full = tlen - (tlen % 8u), t = 0u;
+        for (; t < full; t += 8u) for (unsigned j = 0u; j < 8u; j++) { unsigned voff = (t + j) * kv_dim + kvhead * head_size; float p = scores[t + j] * vc[voff + dd]; lanes[j] += p; }
+        for (; t < tlen; t++) { unsigned voff = t * kv_dim + kvhead * head_size; float p = scores[t] * vc[voff + dd]; lanes[t % 8u] += p; }
+        float l[8]; for (int j = 0; j < 8; j++) l[j] = lanes[j];
+        xbout[qoff + dd] = fixed_tree(l, 8u);
+    }
+}
+
 // ------------------------ host ------------------------
 static const unsigned char* g; static size_t gpos, glen;
 static unsigned ru32() { unsigned v; memcpy(&v, g + gpos, 4); gpos += 4; return v; }
@@ -192,6 +262,25 @@ int main(int argc, char** argv) {
             const char* nm = op == 4 ? "q4k_linear" : "q6k_integer";
             fails += check(nm, cpu, [&](float* o){ if (op==4) k_q4k<<<(M+63)/64,64>>>(dx, dw, dy, K, M, nsuper); else k_q6k_int<<<(M+63)/64,64>>>(dx, dw, dy, K, M, nsuper); cudaDeviceSynchronize(); cudaMemcpy(o, dy, M*4, cudaMemcpyDeviceToHost); });
             cudaFree(dx); cudaFree(dw); cudaFree(dy);
+        } else if (op == 6) { // rms: in = x[feat*rows], w = weight[feat] as f32; p2 = eps bits
+            unsigned feat = p0, rows = p1; float eps; memcpy(&eps, &p2, 4);
+            float *dx, *dwt, *dout; cudaMalloc(&dx, nin*4); cudaMalloc(&dwt, nw); cudaMalloc(&dout, no*4);
+            cudaMemcpy(dx, in, nin*4, cudaMemcpyHostToDevice); cudaMemcpy(dwt, w, nw, cudaMemcpyHostToDevice);
+            fails += check("rms_norm", cpu, [&](float* o){ k_rms<<<(rows+63)/64,64>>>(dx, dwt, dout, feat, rows, eps); cudaDeviceSynchronize(); cudaMemcpy(o, dout, no*4, cudaMemcpyDeviceToHost); });
+            cudaFree(dx); cudaFree(dwt); cudaFree(dout);
+        } else if (op == 7) { // softmax: in = x[last*rows]
+            unsigned last = p0, rows = p1;
+            float *dx, *dout; cudaMalloc(&dx, nin*4); cudaMalloc(&dout, no*4); cudaMemcpy(dx, in, nin*4, cudaMemcpyHostToDevice);
+            fails += check("softmax", cpu, [&](float* o){ k_softmax<<<(rows+63)/64,64>>>(dx, dout, last, rows); cudaDeviceSynchronize(); cudaMemcpy(o, dout, no*4, cudaMemcpyDeviceToHost); });
+            cudaFree(dx); cudaFree(dout);
+        } else if (op == 8) { // attention: in = q ++ kcache ++ vcache; p3 = (kv_mul<<16)|pos
+            unsigned n_heads = p0, head_size = p1, kv_dim = p2, kv_mul = p3 >> 16, pos = p3 & 0xffffu;
+            unsigned qn = n_heads * head_size, cn = (pos + 1u) * kv_dim;
+            const float *q = in, *kc = in + qn, *vc = in + qn + cn;
+            float *dq, *dk, *dv, *dout; cudaMalloc(&dq, qn*4); cudaMalloc(&dk, cn*4); cudaMalloc(&dv, cn*4); cudaMalloc(&dout, no*4);
+            cudaMemcpy(dq, q, qn*4, cudaMemcpyHostToDevice); cudaMemcpy(dk, kc, cn*4, cudaMemcpyHostToDevice); cudaMemcpy(dv, vc, cn*4, cudaMemcpyHostToDevice);
+            fails += check("attention", cpu, [&](float* o){ k_attention<<<(n_heads+63)/64,64>>>(dq, dk, dv, dout, n_heads, head_size, kv_dim, kv_mul, pos); cudaDeviceSynchronize(); cudaMemcpy(o, dout, no*4, cudaMemcpyDeviceToHost); });
+            cudaFree(dq); cudaFree(dk); cudaFree(dv); cudaFree(dout);
         }
     }
     printf("VERDICT: %s\n", fails == 0 ? "PASS - all forward kernels bit-identical to CPU on NVIDIA" : "FAIL");
