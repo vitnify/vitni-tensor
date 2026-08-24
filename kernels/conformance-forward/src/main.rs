@@ -527,34 +527,37 @@ fn q6k_conformance(q6k_src: &str) {
     println!("  VERDICT: Q6_K {}\n", if fails == 0 { "PASS — bit-identical to the CPU hot path" } else { "FAIL" });
 }
 
-// Faithful CPU replica of forward_quantized's inline multi-head attention.
+// Faithful CPU replica of forward_quantized's inline multi-head attention
+// (regime-2: all three reductions go through the crate's canonical reduction,
+// matching the engine and the Metal kernel bit-for-bit).
 fn attention_cpu(q: &[f32], kc: &[f32], vc: &[f32], n_heads: usize, head_size: usize, kv_dim: usize, kv_mul: usize, pos: usize) -> Vec<f32> {
+    use vitni_tensor::ops::quant::{canonical_dot_pub, canonical_sum_pub};
     let mut xb_out = vec![0.0f32; n_heads * head_size];
+    let sqrt_hd = libm::sqrtf(head_size as f32);
+    let tlen = pos + 1;
     for h in 0..n_heads {
         let q_off = h * head_size;
-        let mut att = vec![0.0f32; pos + 1];
-        for t in 0..=pos {
+        let mut att = vec![0.0f32; tlen];
+        for t in 0..tlen {
             let k_off = t * kv_dim + (h / kv_mul) * head_size;
-            let mut score = 0.0f32;
-            for dd in 0..head_size {
-                score += q[q_off + dd] * kc[k_off + dd];
-            }
-            score /= libm::sqrtf(head_size as f32);
-            att[t] = score;
+            // Q·K via the canonical reduction over head_size.
+            let score = canonical_dot_pub(&q[q_off..q_off + head_size], &kc[k_off..k_off + head_size], head_size);
+            att[t] = score / sqrt_hd;
         }
-        // softmax_inplace
+        // softmax_inplace with canonical-sum denominator.
         let mut mx = f32::NEG_INFINITY;
         for &v in att.iter() { if v > mx { mx = v; } }
-        let mut sum = 0.0f32;
-        for v in att.iter_mut() { *v = libm::expf(*v - mx); sum += *v; }
-        let inv = 1.0 / sum;
+        for v in att.iter_mut() { *v = libm::expf(*v - mx); }
+        let inv = 1.0 / canonical_sum_pub(&att, tlen);
         for v in att.iter_mut() { *v *= inv; }
-        for t in 0..=pos {
-            let v_off = t * kv_dim + (h / kv_mul) * head_size;
-            let a = att[t];
-            for dd in 0..head_size {
-                xb_out[q_off + dd] += a * vc[v_off + dd];
+        // A·V: canonical reduction over time per output dim (value column gathered).
+        let mut vcol = vec![0.0f32; tlen];
+        for dd in 0..head_size {
+            for t in 0..tlen {
+                let v_off = t * kv_dim + (h / kv_mul) * head_size;
+                vcol[t] = vc[v_off + dd];
             }
+            xb_out[q_off + dd] = canonical_dot_pub(&att, &vcol, tlen);
         }
     }
     xb_out
