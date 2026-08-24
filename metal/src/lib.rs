@@ -62,7 +62,10 @@ pub struct MetalForward {
     device: Device,
     queue: CommandQueue,
     pl_q4k_linear: ComputePipelineState,
-    pl_q6k_integer: ComputePipelineState,
+    pl_q4k_acc: ComputePipelineState,
+    pl_q6k_quant: ComputePipelineState,
+    pl_q6k_dot: ComputePipelineState,
+    pl_q6k_dot_acc: ComputePipelineState,
     pl_q4k_dequant: ComputePipelineState,
     pl_rms: ComputePipelineState,
     pl_silu_mul: ComputePipelineState,
@@ -111,6 +114,10 @@ pub struct MetalForward {
     b_logits: Buffer,
     b_cos: Buffer,
     b_sin: Buffer,
+    // scratch for Q6_K quantize-once: x quantized to int8 per super-block, reused
+    // by every output row of one linear.
+    b_q8_dx: Buffer,
+    b_q8_qs: Buffer,
 }
 
 fn write_buf(buf: &Buffer, data: &[f32]) {
@@ -138,7 +145,10 @@ impl MetalForward {
 
         Ok(MetalForward {
             pl_q4k_linear: pipeline(&device, Q4K, "q4k_linear")?,
-            pl_q6k_integer: pipeline(&device, Q6K_INT, "q6k_integer_linear")?,
+            pl_q4k_acc: pipeline(&device, Q4K, "q4k_linear_acc")?,
+            pl_q6k_quant: pipeline(&device, Q6K_INT, "q6k_quantize")?,
+            pl_q6k_dot: pipeline(&device, Q6K_INT, "q6k_integer_dot")?,
+            pl_q6k_dot_acc: pipeline(&device, Q6K_INT, "q6k_integer_dot_acc")?,
             pl_q4k_dequant: pipeline(&device, Q4K, "q4k_dequant")?,
             pl_rms: pipeline(&device, FWD, "rms_kernel")?,
             pl_silu_mul: pipeline(&device, FWD, "silu_mul")?,
@@ -165,6 +175,8 @@ impl MetalForward {
             b_x: zbuf(dim), b_xb: zbuf(dim), b_q: zbuf(q_out), b_att: zbuf(q_out),
             b_tmp_dim: zbuf(dim), b_gate: zbuf(hidden), b_up: zbuf(hidden), b_inner: zbuf(hidden),
             b_logits: zbuf(vocab), b_cos: zbuf(head_size / 2), b_sin: zbuf(head_size / 2),
+            b_q8_dx: zbuf(dim.max(hidden) / 256),
+            b_q8_qs: device.new_buffer(((dim.max(hidden) / 256) * 256).max(4) as u64, shared),
             device, queue,
         })
     }
@@ -178,22 +190,61 @@ impl MetalForward {
         }
     }
 
-    /// Encode one dispatch into `cmd` as its own compute pass (compute encoders
-    /// in a command buffer execute in order with automatic hazard tracking, so
-    /// each op sees the previous op's writes).
-    fn enc(&self, cmd: &CommandBufferRef, pl: &ComputePipelineState, bufs: &[(u64, &Buffer, u64)], scalars: &[(u64, &[u8])], threads: usize) {
-        let e = cmd.new_compute_command_encoder();
+    /// Encode one dispatch into an existing compute encoder (no encoder switch).
+    fn disp(&self, e: &metal::ComputeCommandEncoderRef, pl: &ComputePipelineState, bufs: &[(u64, &Buffer, u64)], scalars: &[(u64, &[u8])], threads: usize) {
         e.set_compute_pipeline_state(pl);
         for (idx, b, off) in bufs { e.set_buffer(*idx, Some(b), *off); }
         for (idx, d) in scalars { e.set_bytes(*idx, d.len() as u64, d.as_ptr() as *const c_void); }
         let tg = 64u64.min(threads as u64).max(1);
         let groups = (threads as u64 + tg - 1) / tg;
         e.dispatch_thread_groups(MTLSize::new(groups, 1, 1), MTLSize::new(tg, 1, 1));
-        e.end_encoding();
+    }
+    /// Order a later dispatch after earlier writes to `bufs` (bit-exact dependency).
+    fn barr(&self, e: &metal::ComputeCommandEncoderRef, bufs: &[&Buffer]) {
+        let r: Vec<&metal::ResourceRef> = bufs.iter().map(|&b| -> &metal::ResourceRef { b }).collect();
+        e.memory_barrier_with_resources(&r);
     }
 
-    fn pl_lin(&self, wt: &WBuf) -> &ComputePipelineState {
-        if wt.is_q6k { &self.pl_q6k_integer } else { &self.pl_q4k_linear }
+    /// Encode one quantized linear: out[wt.n] = W . in[wt.k]. Q4_K is a single
+    /// dispatch; Q6_K quantizes the input ONCE (shared across all output rows)
+    /// then does the integer dot — instead of re-quantizing x per row.
+    fn lin(&self, e: &metal::ComputeCommandEncoderRef, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
+        let nsuper = wt.k / 256;
+        let dims = [wt.k as u32, wt.n as u32, nsuper as u32];
+        if wt.is_q6k {
+            self.disp(e, &self.pl_q6k_quant,
+                &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0)],
+                &[(3, bytes(&[nsuper as u32]))], nsuper);
+            self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs]);
+            self.disp(e, &self.pl_q6k_dot,
+                &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
+                &[(4, bytes(&dims))], wt.n);
+        } else {
+            self.disp(e, &self.pl_q4k_linear,
+                &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+                &[(3, bytes(&dims))], wt.n);
+        }
+    }
+
+    /// Like `lin`, but accumulates: out[i] += (W . in)[i]. Fuses a residual add
+    /// into the linear (removes a separate add dispatch). out must already hold
+    /// the residual.
+    fn lin_acc(&self, e: &metal::ComputeCommandEncoderRef, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
+        let nsuper = wt.k / 256;
+        let dims = [wt.k as u32, wt.n as u32, nsuper as u32];
+        if wt.is_q6k {
+            self.disp(e, &self.pl_q6k_quant,
+                &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0)],
+                &[(3, bytes(&[nsuper as u32]))], nsuper);
+            self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs]);
+            self.disp(e, &self.pl_q6k_dot_acc,
+                &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
+                &[(4, bytes(&dims))], wt.n);
+        } else {
+            self.disp(e, &self.pl_q4k_acc,
+                &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+                &[(3, bytes(&dims))], wt.n);
+        }
     }
 
     fn rope_cache(&self, pos: usize) -> (Vec<f32>, Vec<f32>) {
@@ -223,64 +274,57 @@ impl MetalForward {
         let feat_rows = [dim as u32, 1u32];
         let eps = [self.rms_eps];
 
+        let _ = nsuper_dim;
         let cmd = self.queue.new_command_buffer();
+        let e = cmd.new_compute_command_encoder();
 
         // embedding(token) -> b_x
         let nsuper_e = self.dim / 256;
-        self.enc(cmd, &self.pl_q4k_dequant,
+        self.disp(e, &self.pl_q4k_dequant,
             &[(0, &self.embed.buf, (token as usize * nsuper_e * 144) as u64), (1, &self.b_x, 0)],
             &[(2, bytes(&[nsuper_e as u32]))], nsuper_e);
+        self.barr(e, &[&self.b_x]);
 
         for layer in 0..self.n_layers {
-            // rms_att: b_x -> b_xb
-            self.enc(cmd, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.l_rms_att[layer], 0), (2, &self.b_xb, 0)],
+            self.disp(e, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.l_rms_att[layer], 0), (2, &self.b_xb, 0)],
                 &[(3, bytes(&feat_rows)), (4, bytes(&eps))], 1);
-            // q/k/v : b_xb -> b_q / key_cache[koff] / value_cache[koff]
-            let (wq, wk, wv) = (&self.l_wq[layer], &self.l_wk[layer], &self.l_wv[layer]);
-            self.enc(cmd, self.pl_lin(wq), &[(0, &self.b_xb, 0), (1, &wq.buf, 0), (2, &self.b_q, 0)],
-                &[(3, bytes(&[wq.k as u32, wq.n as u32, (wq.k / 256) as u32]))], wq.n);
-            self.enc(cmd, self.pl_lin(wk), &[(0, &self.b_xb, 0), (1, &wk.buf, 0), (2, &self.key_cache[layer], koff)],
-                &[(3, bytes(&[wk.k as u32, wk.n as u32, (wk.k / 256) as u32]))], wk.n);
-            self.enc(cmd, self.pl_lin(wv), &[(0, &self.b_xb, 0), (1, &wv.buf, 0), (2, &self.value_cache[layer], koff)],
-                &[(3, bytes(&[wv.k as u32, wv.n as u32, (wv.k / 256) as u32]))], wv.n);
-            // rope q (in place) and rope cached k (in place)
-            self.enc(cmd, &self.pl_rope, &[(0, &self.b_q, 0), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.b_q, 0)],
+            self.barr(e, &[&self.b_xb]);
+            // q/k/v are independent (all read b_xb) — no barrier between them
+            self.lin(e, &self.b_xb, 0, &self.l_wq[layer], &self.b_q, 0);
+            self.lin(e, &self.b_xb, 0, &self.l_wk[layer], &self.key_cache[layer], koff);
+            self.lin(e, &self.b_xb, 0, &self.l_wv[layer], &self.value_cache[layer], koff);
+            self.barr(e, &[&self.b_q, &self.key_cache[layer], &self.value_cache[layer]]);
+            self.disp(e, &self.pl_rope, &[(0, &self.b_q, 0), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.b_q, 0)],
                 &[(4, bytes(&[1u32, self.n_heads as u32, head_size as u32]))], self.n_heads);
             let n_kv = kv_dim / head_size;
-            self.enc(cmd, &self.pl_rope, &[(0, &self.key_cache[layer], koff), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.key_cache[layer], koff)],
+            self.disp(e, &self.pl_rope, &[(0, &self.key_cache[layer], koff), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.key_cache[layer], koff)],
                 &[(4, bytes(&[1u32, n_kv as u32, head_size as u32]))], n_kv);
-            // attention: q, full kcache, full vcache -> b_att
-            self.enc(cmd, &self.pl_attn,
+            self.barr(e, &[&self.b_q, &self.key_cache[layer]]);
+            self.disp(e, &self.pl_attn,
                 &[(0, &self.b_q, 0), (1, &self.key_cache[layer], 0), (2, &self.value_cache[layer], 0), (3, &self.b_att, 0)],
                 &[(4, bytes(&[self.n_heads as u32, head_size as u32, kv_dim as u32, self.kv_mul as u32, pos as u32]))], self.n_heads);
-            // wo: b_att -> b_tmp_dim ; residual b_x += b_tmp_dim
-            let wo = &self.l_wo[layer];
-            self.enc(cmd, self.pl_lin(wo), &[(0, &self.b_att, 0), (1, &wo.buf, 0), (2, &self.b_tmp_dim, 0)],
-                &[(3, bytes(&[wo.k as u32, wo.n as u32, (wo.k / 256) as u32]))], wo.n);
-            self.enc(cmd, &self.pl_add, &[(0, &self.b_x, 0), (1, &self.b_tmp_dim, 0)], &[(2, bytes(&[dim as u32]))], dim);
-            // rms_ffn: b_x -> b_xb
-            self.enc(cmd, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.l_rms_ffn[layer], 0), (2, &self.b_xb, 0)],
+            self.barr(e, &[&self.b_att]);
+            self.lin_acc(e, &self.b_att, 0, &self.l_wo[layer], &self.b_x, 0); // wo + residual
+            self.barr(e, &[&self.b_x]);
+            self.disp(e, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.l_rms_ffn[layer], 0), (2, &self.b_xb, 0)],
                 &[(3, bytes(&feat_rows)), (4, bytes(&eps))], 1);
-            // gate/up -> silu_mul -> b_inner ; down -> b_tmp_dim ; residual
-            let (w1, w3, w2) = (&self.l_w1[layer], &self.l_w3[layer], &self.l_w2[layer]);
-            self.enc(cmd, self.pl_lin(w1), &[(0, &self.b_xb, 0), (1, &w1.buf, 0), (2, &self.b_gate, 0)],
-                &[(3, bytes(&[w1.k as u32, w1.n as u32, (w1.k / 256) as u32]))], w1.n);
-            self.enc(cmd, self.pl_lin(w3), &[(0, &self.b_xb, 0), (1, &w3.buf, 0), (2, &self.b_up, 0)],
-                &[(3, bytes(&[w3.k as u32, w3.n as u32, (w3.k / 256) as u32]))], w3.n);
-            self.enc(cmd, &self.pl_silu_mul, &[(0, &self.b_gate, 0), (1, &self.b_up, 0), (2, &self.b_inner, 0)],
+            self.barr(e, &[&self.b_xb]);
+            // gate/up are independent (both read b_xb)
+            self.lin(e, &self.b_xb, 0, &self.l_w1[layer], &self.b_gate, 0);
+            self.lin(e, &self.b_xb, 0, &self.l_w3[layer], &self.b_up, 0);
+            self.barr(e, &[&self.b_gate, &self.b_up]);
+            self.disp(e, &self.pl_silu_mul, &[(0, &self.b_gate, 0), (1, &self.b_up, 0), (2, &self.b_inner, 0)],
                 &[(3, bytes(&[self.hidden as u32]))], self.hidden);
-            self.enc(cmd, self.pl_lin(w2), &[(0, &self.b_inner, 0), (1, &w2.buf, 0), (2, &self.b_tmp_dim, 0)],
-                &[(3, bytes(&[w2.k as u32, w2.n as u32, (w2.k / 256) as u32]))], w2.n);
-            self.enc(cmd, &self.pl_add, &[(0, &self.b_x, 0), (1, &self.b_tmp_dim, 0)], &[(2, bytes(&[dim as u32]))], dim);
+            self.barr(e, &[&self.b_inner]);
+            self.lin_acc(e, &self.b_inner, 0, &self.l_w2[layer], &self.b_x, 0); // w2 (down) + residual
+            self.barr(e, &[&self.b_x]);
         }
-        // final rms -> b_xb ; lm_head -> b_logits
-        self.enc(cmd, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.rms_final, 0), (2, &self.b_xb, 0)],
+        self.disp(e, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.rms_final, 0), (2, &self.b_xb, 0)],
             &[(3, bytes(&feat_rows)), (4, bytes(&eps))], 1);
-        let _ = nsuper_dim;
-        let wcls = &self.wcls;
-        self.enc(cmd, self.pl_lin(wcls), &[(0, &self.b_xb, 0), (1, &wcls.buf, 0), (2, &self.b_logits, 0)],
-            &[(3, bytes(&[wcls.k as u32, wcls.n as u32, (wcls.k / 256) as u32]))], wcls.n);
+        self.barr(e, &[&self.b_xb]);
+        self.lin(e, &self.b_xb, 0, &self.wcls, &self.b_logits, 0);
 
+        e.end_encoding();
         cmd.commit();
         cmd.wait_until_completed();
         unsafe { std::slice::from_raw_parts(self.b_logits.contents() as *const f32, self.vocab) }.to_vec()

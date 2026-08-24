@@ -65,6 +65,63 @@ static inline float fixed_tree(thread float* part, uint len) {
     return part[0];
 }
 
+// Accumulating variant: out[gid] += dot, fusing the residual add into the
+// linear (removes a separate add_inplace dispatch). Bit-identical: `a + dot`
+// with a = the residual value already in out[gid].
+kernel void q4k_linear_acc(
+    device const float* x    [[buffer(0)]],
+    device const uchar* w    [[buffer(1)]],
+    device       float* out  [[buffer(2)]],
+    constant     uint*  dims [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    uint K = dims[0], M = dims[1], nsuper = dims[2];
+    if (gid >= M) return;
+    device const uchar* wrow = w + (ulong)gid * nsuper * Q4K_BYTES;
+    float lanes[8];
+    for (uint j = 0u; j < 8u; j++) lanes[j] = 0.0f;
+    float chunk_sums[64];
+    uint nchunks_used = 0u;
+    uint supers_per_chunk = CANON_CHUNK / Q4K_NUMEL;
+    float buf[256];
+    for (uint b = 0u; b < nsuper; b++) {
+        uint base = b * Q4K_NUMEL;
+        if (base >= K) break;
+        device const uchar* blk = wrow + b * Q4K_BYTES;
+        float d    = f16_to_f32((ushort)((uint)blk[0] | ((uint)blk[1] << 8)));
+        float dmin = f16_to_f32((ushort)((uint)blk[2] | ((uint)blk[3] << 8)));
+        device const uchar* scales = blk + 4;
+        device const uchar* qs = blk + 16;
+        uint is = 0u, q_off = 0u, y = 0u;
+        for (uint sub = 0u; sub < 4u; sub++) {
+            uint2 sm1 = get_scale_min_k4(is, scales);
+            uint2 sm2 = get_scale_min_k4(is + 1u, scales);
+            float d1 = d * (float)sm1.x; float m1f = dmin * (float)sm1.y;
+            float d2 = d * (float)sm2.x; float m2f = dmin * (float)sm2.y;
+            for (uint t = 0u; t < 32u; t++) {
+                uchar q = qs[q_off + t];
+                volatile float plo = d1 * (float)(q & 0x0Fu); buf[y + t]       = plo - m1f;
+                volatile float phi = d2 * (float)(q >> 4);    buf[y + 32u + t] = phi - m2f;
+            }
+            y += 64u; q_off += 32u; is += 2u;
+        }
+        uint avail = min(Q4K_NUMEL, K - base);
+        uint full = avail - (avail % CANON_LANES);
+        for (uint i = 0u; i < full; i += CANON_LANES) {
+            for (uint j = 0u; j < CANON_LANES; j++) { float p = x[base + i + j] * buf[i + j]; lanes[j] += p; }
+        }
+        for (uint t = full; t < avail; t++) { float p = x[base + t] * buf[t]; lanes[t % CANON_LANES] += p; }
+        bool is_last = (base + avail >= K);
+        if (((b + 1u) % supers_per_chunk == 0u) || is_last) {
+            float l[8];
+            for (uint j = 0u; j < 8u; j++) l[j] = lanes[j];
+            chunk_sums[nchunks_used++] = fixed_tree(l, 8u);
+            for (uint j = 0u; j < 8u; j++) lanes[j] = 0.0f;
+        }
+    }
+    out[gid] = out[gid] + fixed_tree(chunk_sums, nchunks_used);
+}
+
 // Dequantize one Q4_K row to f32 (for the embedding lookup). One thread per
 // super-block. Same guarded dequant as q4k_linear; no dot.
 kernel void q4k_dequant(
