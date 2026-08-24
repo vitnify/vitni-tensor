@@ -61,8 +61,8 @@ const FWD: &str = include_str!("../../kernels/forward_ops.metal");
 pub struct MetalForward {
     device: Device,
     queue: CommandQueue,
-    pl_q4k_linear: ComputePipelineState,
-    pl_q4k_acc: ComputePipelineState,
+    pl_f32_matvec: ComputePipelineState,
+    pl_f32_matvec_acc: ComputePipelineState,
     pl_q6k_quant: ComputePipelineState,
     pl_q6k_dot: ComputePipelineState,
     pl_q6k_dot_acc: ComputePipelineState,
@@ -132,7 +132,18 @@ impl MetalForward {
         let ubuf = |bytes_: &[u8]| device.new_buffer_with_data(bytes_.as_ptr() as *const c_void, bytes_.len() as u64, shared);
         let fbuf = |v: &[f32]| device.new_buffer_with_data(v.as_ptr() as *const c_void, (v.len() * 4) as u64, shared);
         let zbuf = |n: usize| device.new_buffer((n * 4).max(4) as u64, shared);
-        let mkw = |t: &QuantTensor, n: usize, k: usize| WBuf { buf: ubuf(t.bytes), is_q6k: format!("{:?}", t.dtype) == "Q6_K", n, k };
+        // Q4_K weights are dequantized to f32 ONCE here (bit-identical values to
+        // the fused dequant), so the per-token dequant disappears. Q6_K stays
+        // quantized (its shipped regime is the integer dot).
+        let mkw = |t: &QuantTensor, n: usize, k: usize| {
+            let is_q6k = format!("{:?}", t.dtype) == "Q6_K";
+            let buf = if is_q6k {
+                ubuf(t.bytes)
+            } else {
+                fbuf(&vitni_tensor::ops::quant::dequantize_q4_k(t.bytes).expect("dequantize Q4_K"))
+            };
+            WBuf { buf, is_q6k, n, k }
+        };
 
         let dim = cfg.dim;
         let kv_dim = cfg.kv_dim();
@@ -144,8 +155,8 @@ impl MetalForward {
         let seq = cfg.seq_len;
 
         Ok(MetalForward {
-            pl_q4k_linear: pipeline(&device, Q4K, "q4k_linear")?,
-            pl_q4k_acc: pipeline(&device, Q4K, "q4k_linear_acc")?,
+            pl_f32_matvec: pipeline(&device, Q4K, "f32_matvec")?,
+            pl_f32_matvec_acc: pipeline(&device, Q4K, "f32_matvec_acc")?,
             pl_q6k_quant: pipeline(&device, Q6K_INT, "q6k_quantize")?,
             pl_q6k_dot: pipeline(&device, Q6K_INT, "q6k_integer_dot")?,
             pl_q6k_dot_acc: pipeline(&device, Q6K_INT, "q6k_integer_dot_acc")?,
@@ -158,7 +169,8 @@ impl MetalForward {
             dim, hidden, n_layers,
             n_heads: cfg.n_heads, kv_dim, kv_mul: cfg.kv_mul(), head_size,
             vocab, rms_eps: w.rms_eps, rope_theta: w.rope_theta,
-            embed: mkw(&w.token_embedding_table, vocab, dim),
+            // embedding stays QUANTIZED — the lookup dequantizes one row per token.
+            embed: WBuf { buf: ubuf(w.token_embedding_table.bytes), is_q6k: false, n: vocab, k: dim },
             wcls: match &w.wcls { Some(c) => mkw(c, vocab, dim), None => mkw(&w.token_embedding_table, vocab, dim) },
             rms_final: fbuf(w.rms_final_weight),
             l_rms_att: w.layers.iter().map(|l| fbuf(l.rms_att_weight)).collect(),
@@ -220,7 +232,7 @@ impl MetalForward {
                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
                 &[(4, bytes(&dims))], wt.n);
         } else {
-            self.disp(e, &self.pl_q4k_linear,
+            self.disp(e, &self.pl_f32_matvec, // pre-dequantized f32 weights
                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
                 &[(3, bytes(&dims))], wt.n);
         }
@@ -241,7 +253,7 @@ impl MetalForward {
                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
                 &[(4, bytes(&dims))], wt.n);
         } else {
-            self.disp(e, &self.pl_q4k_acc,
+            self.disp(e, &self.pl_f32_matvec_acc, // pre-dequantized f32 weights
                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
                 &[(3, bytes(&dims))], wt.n);
         }

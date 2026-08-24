@@ -65,6 +65,52 @@ static inline float fixed_tree(thread float* part, uint len) {
     return part[0];
 }
 
+// Plain f32 canonical dot: out[gid] = canonical_dot(x, W_row). Used when the
+// Q4_K weights are PRE-DEQUANTIZED to f32 at load, so the per-token dequant is
+// gone. Bit-identical to q4k_linear (which is dequant-then-canonical-dot).
+static inline float canon_dot_f32(device const float* x, device const float* w, uint K) {
+    float chunk_sums[64];
+    uint nch = 0u;
+    uint done = 0u;
+    while (done < K) {
+        uint e = min(done + CANON_CHUNK, K);
+        uint n = e - done;
+        float lanes[8];
+        for (uint j = 0u; j < 8u; j++) lanes[j] = 0.0f;
+        uint full = n - (n % CANON_LANES);
+        uint i = 0u;
+        for (; i < full; i += CANON_LANES) {
+            for (uint j = 0u; j < CANON_LANES; j++) { float p = x[done + i + j] * w[done + i + j]; lanes[j] += p; }
+        }
+        for (; i < n; i++) { uint jj = i % CANON_LANES; float p = x[done + i] * w[done + i]; lanes[jj] += p; }
+        chunk_sums[nch++] = fixed_tree(lanes, 8u);
+        done = e;
+    }
+    return fixed_tree(chunk_sums, nch);
+}
+kernel void f32_matvec(
+    device const float* x    [[buffer(0)]],
+    device const float* w    [[buffer(1)]],
+    device       float* out  [[buffer(2)]],
+    constant     uint*  dims [[buffer(3)]],  // {K, M}
+    uint gid [[thread_position_in_grid]])
+{
+    uint K = dims[0], M = dims[1];
+    if (gid >= M) return;
+    out[gid] = canon_dot_f32(x, w + (ulong)gid * K, K);
+}
+kernel void f32_matvec_acc(
+    device const float* x    [[buffer(0)]],
+    device const float* w    [[buffer(1)]],
+    device       float* out  [[buffer(2)]],
+    constant     uint*  dims [[buffer(3)]],
+    uint gid [[thread_position_in_grid]])
+{
+    uint K = dims[0], M = dims[1];
+    if (gid >= M) return;
+    out[gid] = out[gid] + canon_dot_f32(x, w + (ulong)gid * K, K);
+}
+
 // Accumulating variant: out[gid] += dot, fusing the residual add into the
 // linear (removes a separate add_inplace dispatch). Bit-identical: `a + dot`
 // with a = the residual value already in out[gid].
