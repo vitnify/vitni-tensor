@@ -30,3 +30,10 @@ path = "fuzz_targets/gguf_config.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "quant_dequant"
+path = "fuzz_targets/quant_dequant.rs"
+test = false
+doc = false
+bench = false

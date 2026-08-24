@@ -884,11 +884,15 @@ fn dot32_pair_neon(qsl: &[u8], xlo: &[i8], xhi: &[i8]) -> (i32, i32) {
 /// identical bits, so this is purely a speed choice — no regime change.
 #[inline]
 fn dot32_pair(qsl: &[u8], xlo: &[i8], xhi: &[i8]) -> (i32, i32) {
-    #[cfg(target_arch = "aarch64")]
+    // `not(miri)`: miri can't execute NEON intrinsics, so under miri route to the scalar
+    // path -- letting miri verify the memory safety of the portable indexing. The NEON
+    // path is unchanged for real builds; the two are proven bit-identical by
+    // `neon_dot32_matches_scalar`.
+    #[cfg(all(target_arch = "aarch64", not(miri)))]
     {
         dot32_pair_neon(qsl, xlo, xhi)
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(any(not(target_arch = "aarch64"), miri))]
     {
         dot32_pair_scalar(qsl, xlo, xhi)
     }
@@ -2465,7 +2469,7 @@ mod tests {
     /// close. If this ever fails, the NEON kernel has changed the numerical
     /// regime and every previously issued certificate is invalidated.
     #[test]
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(miri)))]  // NEON intrinsics can't run under miri
     fn neon_dot32_matches_scalar() {
         let mut st: u64 = 0x9E3779B97F4A7C15;
         let mut next = || {
