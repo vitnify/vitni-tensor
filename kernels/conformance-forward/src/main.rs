@@ -103,6 +103,30 @@ impl Gpu {
         let ptr = bo.contents() as *const f32;
         unsafe { std::slice::from_raw_parts(ptr, rows * feat) }.to_vec()
     }
+    fn attention(&self, q: &[f32], kc: &[f32], vc: &[f32], n_heads: usize, head_size: usize, kv_dim: usize, kv_mul: usize, pos: usize) -> Vec<f32> {
+        let shared = MTLResourceOptions::StorageModeShared;
+        let bq = self.device.new_buffer_with_data(q.as_ptr() as *const c_void, (q.len() * 4) as u64, shared);
+        let bk = self.device.new_buffer_with_data(kc.as_ptr() as *const c_void, (kc.len() * 4) as u64, shared);
+        let bv = self.device.new_buffer_with_data(vc.as_ptr() as *const c_void, (vc.len() * 4) as u64, shared);
+        let bo = self.device.new_buffer((n_heads * head_size * 4) as u64, shared);
+        let dims: [u32; 5] = [n_heads as u32, head_size as u32, kv_dim as u32, kv_mul as u32, pos as u32];
+        let cmd = self.queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&self.pipeline);
+        enc.set_buffer(0, Some(&bq), 0);
+        enc.set_buffer(1, Some(&bk), 0);
+        enc.set_buffer(2, Some(&bv), 0);
+        enc.set_buffer(3, Some(&bo), 0);
+        enc.set_bytes(4, 20, dims.as_ptr() as *const c_void);
+        let tg = 64u64.min(n_heads as u64).max(1);
+        let groups = (n_heads as u64 + tg - 1) / tg;
+        enc.dispatch_thread_groups(MTLSize::new(groups, 1, 1), MTLSize::new(tg, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        let ptr = bo.contents() as *const f32;
+        unsafe { std::slice::from_raw_parts(ptr, n_heads * head_size) }.to_vec()
+    }
     fn rope(&self, x: &[f32], cosc: &[f32], sinc: &[f32], seq: usize, n_heads: usize, head_dim: usize) -> Vec<f32> {
         let shared = MTLResourceOptions::StorageModeShared;
         let bx = self.device.new_buffer_with_data(x.as_ptr() as *const c_void, (x.len() * 4) as u64, shared);
@@ -364,6 +388,66 @@ fn q6k_conformance(q6k_src: &str) {
         if !ok { fails += 1; }
     }
     println!("  VERDICT: Q6_K {}\n", if fails == 0 { "PASS — bit-identical to the CPU hot path" } else { "FAIL" });
+}
+
+// Faithful CPU replica of forward_quantized's inline multi-head attention.
+fn attention_cpu(q: &[f32], kc: &[f32], vc: &[f32], n_heads: usize, head_size: usize, kv_dim: usize, kv_mul: usize, pos: usize) -> Vec<f32> {
+    let mut xb_out = vec![0.0f32; n_heads * head_size];
+    for h in 0..n_heads {
+        let q_off = h * head_size;
+        let mut att = vec![0.0f32; pos + 1];
+        for t in 0..=pos {
+            let k_off = t * kv_dim + (h / kv_mul) * head_size;
+            let mut score = 0.0f32;
+            for dd in 0..head_size {
+                score += q[q_off + dd] * kc[k_off + dd];
+            }
+            score /= libm::sqrtf(head_size as f32);
+            att[t] = score;
+        }
+        // softmax_inplace
+        let mut mx = f32::NEG_INFINITY;
+        for &v in att.iter() { if v > mx { mx = v; } }
+        let mut sum = 0.0f32;
+        for v in att.iter_mut() { *v = libm::expf(*v - mx); sum += *v; }
+        let inv = 1.0 / sum;
+        for v in att.iter_mut() { *v *= inv; }
+        for t in 0..=pos {
+            let v_off = t * kv_dim + (h / kv_mul) * head_size;
+            let a = att[t];
+            for dd in 0..head_size {
+                xb_out[q_off + dd] += a * vc[v_off + dd];
+            }
+        }
+    }
+    xb_out
+}
+
+fn attention_conformance(src: &str) {
+    let gpu = Gpu::new(src, "attention");
+    println!("== attention (GQA + KV cache): Metal vs CPU forward replica ==");
+    let cfgs: &[(usize, usize, usize, usize)] = &[
+        (32, 64, 4, 25),  // TinyLlama GQA, 26 positions
+        (32, 64, 4, 0),   // pos 0 (self only)
+        (8, 32, 8, 10),   // MHA
+        (4, 64, 1, 3),    // single kv head
+    ];
+    let mut fails = 0usize;
+    for &(n_heads, head_size, kv_heads, pos) in cfgs {
+        let kv_dim = kv_heads * head_size;
+        let kv_mul = n_heads / kv_heads;
+        let q = lcg_vec(n_heads * head_size, 0x9000 ^ (pos as u64));
+        let kc = lcg_vec((pos + 1) * kv_dim, 0xA000 ^ (pos as u64));
+        let vc = lcg_vec((pos + 1) * kv_dim, 0xB000 ^ (pos as u64));
+        let cpu = attention_cpu(&q, &kc, &vc, n_heads, head_size, kv_dim, kv_mul, pos);
+        let g = gpu.attention(&q, &kc, &vc, n_heads, head_size, kv_dim, kv_mul, pos);
+        let exact = cpu.iter().zip(&g).filter(|(c, gg)| c.to_bits() == gg.to_bits()).count();
+        let mx = cpu.iter().zip(&g).map(|(c, gg)| ulp(*c, *gg)).max().unwrap_or(0);
+        let ok = exact == cpu.len();
+        println!("  [heads={} hs={} kv={} pos={}] exact {}/{}  maxULP {}  {}", n_heads, head_size, kv_heads, pos, exact, cpu.len(), mx, if ok { "OK" } else { "FAIL" });
+        if !ok { fails += 1; }
+    }
+    println!("  VERDICT: attention {}\n", if fails == 0 { "PASS — bit-identical to CPU forward" } else { "FAIL" });
 }
 
 fn forward_ops_conformance(src: &str) {
@@ -658,6 +742,7 @@ fn main() {
     q4k_conformance(include_str!("../../q4k.metal"));
     q6k_conformance(include_str!("../../q6k.metal"));
     forward_ops_conformance(include_str!("../../forward_ops.metal"));
+    attention_conformance(include_str!("../../forward_ops.metal"));
 
     let inputs = build_inputs();
     println!("== expf conformance (Metal fast-math OFF vs libm::expf) ==");

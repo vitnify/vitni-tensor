@@ -172,6 +172,53 @@ kernel void rope_apply(
     }
 }
 
+// Multi-head attention with KV cache, one thread per query head. Matches the
+// CPU forward's PLAIN serial reductions (not the canonical lane/tree): serial
+// Q.K dot, /sqrt(head_size), serial softmax, serial A.V accumulation over t.
+// GQA: query head h reads kv head h/kv_mul. Caps context at 512 positions
+// (enough for the conformance driver; raise if needed).
+kernel void attention(
+    device const float* q      [[buffer(0)]],  // [n_heads*head_size], this token, post-rope
+    device const float* kcache [[buffer(1)]],  // [(pos+1)*kv_dim] for this layer
+    device const float* vcache [[buffer(2)]],  // [(pos+1)*kv_dim] for this layer
+    device       float* xbout  [[buffer(3)]],  // [n_heads*head_size]
+    constant     uint*  d      [[buffer(4)]],  // {n_heads, head_size, kv_dim, kv_mul, pos}
+    uint h [[thread_position_in_grid]])
+{
+    uint n_heads = d[0], head_size = d[1], kv_dim = d[2], kv_mul = d[3], pos = d[4];
+    if (h >= n_heads) return;
+    float scores[512];
+    uint qoff = h * head_size;
+    uint kvhead = h / kv_mul;
+    float rsqrt_hs = sqrt((float)head_size);
+    for (uint t = 0u; t <= pos; t++) {
+        uint koff = t * kv_dim + kvhead * head_size;
+        float sc = 0.0f;
+        for (uint dd = 0u; dd < head_size; dd++) {
+            float p = q[qoff + dd] * kcache[koff + dd]; // plain serial dot (named product)
+            sc += p;
+        }
+        scores[t] = div_sw(sc, rsqrt_hs); // score / sqrt(head_size)
+    }
+    // serial softmax (== softmax_inplace)
+    float mx = -INFINITY;
+    for (uint t = 0u; t <= pos; t++) { if (scores[t] > mx) mx = scores[t]; }
+    float sum = 0.0f;
+    for (uint t = 0u; t <= pos; t++) { float e = vt_expf(scores[t] - mx); scores[t] = e; sum += e; }
+    float inv = div_sw(1.0f, sum);
+    for (uint t = 0u; t <= pos; t++) { scores[t] = scores[t] * inv; }
+    // serial A.V (t outer, accumulate into xbout[d])
+    for (uint dd = 0u; dd < head_size; dd++) xbout[qoff + dd] = 0.0f;
+    for (uint t = 0u; t <= pos; t++) {
+        uint voff = t * kv_dim + kvhead * head_size;
+        float a = scores[t];
+        for (uint dd = 0u; dd < head_size; dd++) {
+            float p = a * vcache[voff + dd]; // named product
+            xbout[qoff + dd] += p;
+        }
+    }
+}
+
 // silu(x) = x / (1 + e^-x)
 kernel void silu_kernel(
     device const float* x   [[buffer(0)]],
