@@ -6,6 +6,20 @@
 //! (no host-runtime dependency) while letting model code transparently route the
 //! expensive ops through hardware acceleration.
 //!
+//! ## The determinism contract a GPU impl MUST honor
+//!
+//! A `SYS_GPU_MATMUL` implementation is only a valid verifier substitute if it
+//! produces the SAME bits as the CPU canonical reduction (`ops::quant::
+//! canonical_dot`). That is not automatic — stock cuBLAS / PyTorch-CUDA /
+//! llama.cpp-CUDA choose their own reduction order and fuse multiply-add, and
+//! do NOT match. The conforming reference kernels are in `kernels/`
+//! (`canonical_matmul.metal`, `canonical_matmul.cu`): fixed reduction order
+//! (element -> lane by `i % 8`, fixed pairwise tree), and NO fma contraction
+//! (`--fmad=false` / `fastMathEnabled=false`, or the `__fmul_rn`/`__fadd_rn`
+//! intrinsics). Verified bit-for-bit on Apple M3 Max (Metal) and NVIDIA T4
+//! (CUDA) — see `kernels/README.md`; `tests/gpu_kernel_contract.rs` guards the
+//! kernel algorithm against this crate in CI.
+//!
 //! ## Why on the model code, not on `Tensor`?
 //!
 //! `Tensor` storage stays immutable (`Arc<Storage>`) and lifetime-

@@ -1,0 +1,22 @@
+# Metal conformance harness — proves kernels/canonical_matmul.metal is
+# bit-for-bit identical to the vitni-tensor CPU canonical reduction on Apple
+# GPUs. std + macOS only, so it is deliberately NOT a member of the no_std
+# vitni-tensor workspace: its own [workspace] table detaches it, and the parent
+# `cargo test` never tries to build it (which would fail on Linux CI).
+#
+# Run on a Mac:  cd kernels/conformance-metal && cargo run --offline
+# Exits non-zero on any bit-level divergence, so it works as a macOS CI gate.
+[package]
+name = "vitni-tensor-gpu-conformance"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "conformance"
+path = "src/main.rs"
+
+[dependencies]
+metal = "0.29"

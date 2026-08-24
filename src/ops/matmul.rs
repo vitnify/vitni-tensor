@@ -6,6 +6,15 @@
 //! may parallelize the shape but may not choose its own order.
 //! phase 3: route to `SYS_GPU_MATMUL` when the tensors live on a Gpu device.
 //!
+//! The GPU reference kernels that a `SYS_GPU_MATMUL` impl must match live in
+//! `kernels/` (`canonical_matmul.metal`, `canonical_matmul.cu`). They are
+//! verified bit-for-bit against this reduction on real hardware — Apple M3 Max
+//! (Metal) and NVIDIA T4 (CUDA) both reproduce the pin below — see
+//! `kernels/README.md`. The two rules a conforming kernel MUST obey: fix the
+//! reduction ORDER by contract (not the hardware), and forbid FMA contraction
+//! (separate rounded multiply + add). `tests/gpu_kernel_contract.rs` locks
+//! those kernels' algorithm to this reduction in CI, without needing a GPU.
+//!
 //! Higher-rank batched matmul is the GPU path work. For phase 2 we accept rank-2
 //! tensors only — that's enough to walk a single transformer
 //! layer's projections (Q/K/V/O/MLP) one at a time.

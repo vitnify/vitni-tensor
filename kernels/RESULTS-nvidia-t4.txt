@@ -1,0 +1,45 @@
+NVIDIA conformance run — canonical reduction contract on GPU
+============================================================
+Instance : g4dn.xlarge (spun up + terminated, us-east-1), auto-terminate net
+GPU      : Tesla T4 (Compute Capability 7.5)
+Driver   : 595.91.07
+Toolkit  : CUDA 13.2 (nvcc V13.2.51)
+Source   : kernels/cuda_conformance.cu
+Anchor   : PINNED_MATMUL_HASH 0x8a428433686d13af (from vitni-tensor matmul.rs)
+
+Two builds of the SAME source; two device kernels in each:
+  plain = bare '*' and '+' (nvcc --fmad flag decides fusion)
+  rn    = shipped kernel, __fmul_rn / __fadd_rn (fusion-proof by construction)
+
+------------------------------------------------------------
+SAFE build:  nvcc --fmad=false -Xcompiler -ffp-contract=off -O2 -arch=sm_75
+------------------------------------------------------------
+  host FNV over (4,64,4) pin : 0x8a428433686d13af  == pin  (host IS the contract)
+  GPU plain FNV              : 0x8a428433686d13af  == pin
+  GPU rn    FNV              : 0x8a428433686d13af  == pin
+  sweep (9 shapes, incl. K=14336 chunked, tail path):
+     plain : ALL exact, max ULP 0
+     rn    : ALL exact, max ULP 0
+  VERDICT: plain MATCH, rn MATCH   (exit 0)
+
+------------------------------------------------------------
+FUSED build (CONTROL): nvcc --fmad=true -Xcompiler -ffp-contract=off -O2 -arch=sm_75
+------------------------------------------------------------
+  host FNV over (4,64,4) pin : 0x8a428433686d13af  == pin  (host build stable)
+  GPU plain FNV              : 0x2aa087844c3dd8b7  != pin  (fusion moved the bits)
+  GPU rn    FNV              : 0x8a428433686d13af  == pin  (intrinsics beat the flag)
+  sweep:
+     plain : DIVERGES — e.g. [16x1024x16] 59/256 exact, max ULP 448;
+             [4x14336x4] 3/16 exact, max ULP 44
+     rn    : ALL exact, max ULP 0
+  VERDICT: plain DIVERGES, rn MATCH   (exit 1, as expected for the control)
+
+------------------------------------------------------------
+Conclusion
+------------------------------------------------------------
+* NVIDIA T4 lands on the EXACT same bits as the CPU canonical reduction and as
+  Apple M3 Max (Metal) — all three == 0x8a428433686d13af.
+* Determinism is a property of the CONTRACT-OBEYING kernel + flags, not of "a
+  GPU": the fused control diverges by up to 448 ULP.
+* The shipped kernel (__fmul_rn/__fadd_rn) is bit-exact AND flag-independent —
+  it matched even under --fmad=true.

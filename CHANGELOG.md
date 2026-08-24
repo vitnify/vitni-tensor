@@ -3,6 +3,26 @@
 All notable changes to `vitni-tensor` are documented here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+**Deterministic GPU matmul, proven — the reproducible path is no longer CPU-only.**
+The `SYS_GPU_MATMUL` seam existed (`accel::Accelerator`) but had no conforming
+kernel to point a GPU impl at. Added the reference kernels and their proof.
+
+- **`kernels/canonical_matmul.metal` + `kernels/canonical_matmul.cu`:** the
+  canonical reduction on-GPU — fixed order (element -> lane by `i % 8`, fixed
+  pairwise tree) and NO fma contraction (`fastMathEnabled=false` /
+  `--fmad=false`, plus `__fmul_rn`/`__fadd_rn`).
+- **Verified bit-for-bit** against the CPU reduction on real hardware: Apple M3
+  Max (Metal) and NVIDIA Tesla T4 (CUDA 13.2) both reproduce the matmul pin
+  `0x8a428433686d13af`, max ULP 0 across the shape sweep. Controls confirm a
+  fused kernel diverges (up to 448 ULP). See `kernels/README.md` and
+  `kernels/RESULTS-nvidia-t4.txt`.
+- **`tests/gpu_kernel_contract.rs`:** portable CI guard that locks the kernels'
+  algorithm to `canonical_dot` and the pin — no GPU required.
+- Docs in `accel::mod` and `ops::matmul` now point at the reference kernels.
+- No change to any digest or regime.
+
 ## [0.2.1] — 2026-08-20
 
 Hygiene (engine-review finding 5); no change to any digest.
