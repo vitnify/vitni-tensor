@@ -65,6 +65,37 @@ static inline float fixed_tree(thread float* part, uint len) {
     return part[0];
 }
 
+// Dequantize one Q4_K row to f32 (for the embedding lookup). One thread per
+// super-block. Same guarded dequant as q4k_linear; no dot.
+kernel void q4k_dequant(
+    device const uchar* w    [[buffer(0)]],  // one row: nsuper*144 bytes
+    device       float* out  [[buffer(1)]],  // nsuper*256 f32
+    constant     uint*  dims [[buffer(2)]],  // {nsuper}
+    uint b [[thread_position_in_grid]])
+{
+    uint nsuper = dims[0];
+    if (b >= nsuper) return;
+    device const uchar* blk = w + b * Q4K_BYTES;
+    float d    = f16_to_f32((ushort)((uint)blk[0] | ((uint)blk[1] << 8)));
+    float dmin = f16_to_f32((ushort)((uint)blk[2] | ((uint)blk[3] << 8)));
+    device const uchar* scales = blk + 4;
+    device const uchar* qs = blk + 16;
+    device float* obuf = out + b * Q4K_NUMEL;
+    uint is = 0u, q_off = 0u, y = 0u;
+    for (uint sub = 0u; sub < 4u; sub++) {
+        uint2 sm1 = get_scale_min_k4(is, scales);
+        uint2 sm2 = get_scale_min_k4(is + 1u, scales);
+        float d1 = d * (float)sm1.x; float m1f = dmin * (float)sm1.y;
+        float d2 = d * (float)sm2.x; float m2f = dmin * (float)sm2.y;
+        for (uint t = 0u; t < 32u; t++) {
+            uchar q = qs[q_off + t];
+            volatile float plo = d1 * (float)(q & 0x0Fu); obuf[y + t]       = plo - m1f;
+            volatile float phi = d2 * (float)(q >> 4);    obuf[y + 32u + t] = phi - m2f;
+        }
+        y += 64u; q_off += 32u; is += 2u;
+    }
+}
+
 kernel void q4k_linear(
     device const float* x    [[buffer(0)]],
     device const uchar* w    [[buffer(1)]],

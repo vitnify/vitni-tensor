@@ -112,8 +112,27 @@ M3 Max, max ULP 0; NVIDIA-ready), verified against the CPU reference:
 no float rounding to diverge. `attention` is a composition of `matmul` + scale +
 `softmax` + `matmul`, all proven.
 
-**Remaining: the end-to-end.** Wire these kernels into a GPU forward path (a
-`MetalAccelerator` + the quantized-linear route + KV-cache), run a full TinyLlama
-forward on GPU, and verify the certificate digest matches across CPU + Apple GPU
-+ NVIDIA (T4). That's integration + one more EC2 leg, not new numerics — every
-numerically hard part is done.
+## End-to-end: full TinyLlama forward on the GPU ✅ (Apple)
+
+`conformance-forward/src/forward_gpu.rs` orchestrates the proven kernels into a
+complete Llama-2 decode step (embedding → 22×[rms, q/k/v, rope, GQA attention,
+o, +res, rms, gate/up, silu, down, +res] → rms → lm_head). Driven alongside the
+CPU engine's `forward_quantized::step` on `tinyllama-Q4_K_M.gguf`, the GPU logits
+are **bit-for-bit identical at every position — 32000/32000, max ULP 0** — and
+the full-run logit digest matches (`0x010258a2ed3cbb29`). Since the certificate
+digest is a deterministic hash of these logits, the receipt is identical.
+
+One correctness note worth recording: the quantized forward does NOT call the
+`canonical_dot_*` functions. For Q4_K it uses `linear_q4_k_fused` (f32-dequant,
+bit-identical to `canonical_dot_q4k_fused` — our kernel matched), but for Q6_K it
+uses `linear_q6_k_integer` — an INTEGER-dot regime (quantize x→int8, integer dot,
+`fixed_tree` over super-blocks) that is NOT bit-identical to the f32 path. The
+first kernel matched the wrong reference and the forward diverged (~1 ULP,
+compounding); `q6k_int.metal` replicates the integer path and closes it.
+
+## Remaining: NVIDIA leg
+
+Port the kernels to CUDA (correctly-rounded `__fdiv_rn`, `-ftz=false`, no fma
+contraction) and run the same orchestration on a T4 to extend "bit-identical
+forward" from CPU + Apple GPU to NVIDIA. Integration + one EC2 leg; the numerics
+are done.

@@ -7,9 +7,88 @@
 //! usually blocks a full deterministic GPU forward; proving it here shows the
 //! transcendental wall is not there.
 
+mod forward_gpu;
+
 use std::ffi::c_void;
 use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
 use vitni_tensor::{Shape, Storage, Tensor};
+
+fn argmax_i(v: &[f32]) -> usize {
+    let mut bi = 0usize;
+    let mut bv = v[0];
+    for (i, &x) in v.iter().enumerate().skip(1) {
+        if x > bv { bv = x; bi = i; }
+    }
+    bi
+}
+
+fn end_to_end() {
+    use vitni_tensor::model::{config::Config, forward::RunState, forward_quantized, gguf::GgufFile, quant_weights::QuantizedWeights};
+    let path = "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf";
+    let blob = std::fs::read(path).expect("read gguf");
+    let gguf = GgufFile::parse(&blob).unwrap();
+    let cfg = Config::from_gguf(&gguf).unwrap();
+    let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+    let prompt: Vec<u32> = vec![1, 9038, 2501, 263, 931, 29892]; // "Once upon a time,"
+    let mut cpu_state = RunState::new(&cfg);
+    let mut gpu = forward_gpu::GpuForward::new(
+        &cfg, &weights,
+        include_str!("../../q4k.metal"),
+        include_str!("../../q6k_int.metal"),
+        include_str!("../../forward_ops.metal"),
+    );
+    // localize: does my q4k/q6k kernel match the ACTUAL forward functions?
+    {
+        let l0 = &weights.layers[0];
+        let q_out = cfg.n_heads * cfg.head_size();
+        let gq4k = Gpu::new(include_str!("../../q4k.metal"), "q4k_linear");
+        let gq6k = Gpu::new(include_str!("../../q6k_int.metal"), "q6k_integer_linear");
+        let xin = lcg_vec(cfg.dim, 0x111);
+        let mut cpu_q = vec![0f32; q_out];
+        vitni_tensor::ops::quant::linear_q4_k_fused(&xin, l0.wq.bytes, &mut cpu_q, 1, cfg.dim, q_out).unwrap();
+        let gpu_q = gq4k.q4k(&xin, l0.wq.bytes, q_out, cfg.dim, cfg.dim / 256);
+        let ex = cpu_q.iter().zip(&gpu_q).filter(|(a, b)| a.to_bits() == b.to_bits()).count();
+        println!("  [debug] Q4_K linear(wq) vs linear_q4_k_fused: {}/{}", ex, q_out);
+        let xin2 = lcg_vec(cfg.hidden_dim, 0x222);
+        let mut cpu_d = vec![0f32; cfg.dim];
+        vitni_tensor::ops::quant::linear_q6_k_integer(&xin2, l0.w2.bytes, &mut cpu_d, 1, cfg.hidden_dim, cfg.dim).unwrap();
+        let gpu_d = gq6k.q4k(&xin2, l0.w2.bytes, cfg.dim, cfg.hidden_dim, cfg.hidden_dim / 256);
+        let ex2 = cpu_d.iter().zip(&gpu_d).filter(|(a, b)| a.to_bits() == b.to_bits()).count();
+        println!("  [debug] Q6_K linear(w2) vs linear_q6_k_integer: {}/{}", ex2, cfg.dim);
+    }
+    println!("== end-to-end TinyLlama forward: GPU vs CPU per-step logits ==");
+    let mut allok = true;
+    let mut hcpu: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut hgpu: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut fnv = |h: &mut u64, v: &[f32]| {
+        for x in v {
+            for byte in x.to_bits().to_le_bytes() {
+                *h ^= byte as u64;
+                *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+    };
+    for (pos, &tok) in prompt.iter().enumerate() {
+        let cpu = tvec(&forward_quantized::step(&cfg, &weights, &mut cpu_state, tok, pos).unwrap());
+        let g = gpu.step(tok, pos);
+        let exact = cpu.iter().zip(&g).filter(|(a, b)| a.to_bits() == b.to_bits()).count();
+        let mx = cpu.iter().zip(&g).map(|(a, b)| ulp(*a, *b)).max().unwrap_or(0);
+        let ok = exact == cpu.len();
+        fnv(&mut hcpu, &cpu);
+        fnv(&mut hgpu, &g);
+        println!(
+            "  pos {} tok {:>5}: logits exact {}/{}  maxULP {}  argmax cpu={} gpu={}  {}",
+            pos, tok, exact, cpu.len(), mx, argmax_i(&cpu), argmax_i(&g), if ok { "OK" } else { "FAIL" }
+        );
+        if !ok { allok = false; }
+    }
+    println!("  full-run logit digest  CPU: {:#018x}", hcpu);
+    println!("  full-run logit digest  GPU: {:#018x}", hgpu);
+    println!(
+        "  VERDICT: end-to-end {}\n",
+        if allok && hcpu == hgpu { "PASS — full TinyLlama forward on GPU is bit-identical to CPU (digests match)" } else { "FAIL" }
+    );
+}
 
 fn tvec(t: &Tensor) -> Vec<f32> {
     match t.storage() {
@@ -743,6 +822,7 @@ fn main() {
     q6k_conformance(include_str!("../../q6k.metal"));
     forward_ops_conformance(include_str!("../../forward_ops.metal"));
     attention_conformance(include_str!("../../forward_ops.metal"));
+    end_to_end();
 
     let inputs = build_inputs();
     println!("== expf conformance (Metal fast-math OFF vs libm::expf) ==");
