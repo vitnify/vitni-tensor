@@ -279,6 +279,32 @@ pub fn run_quantized_with_sink<S: CertSink>(
     sink: &mut S,
     tier: u8,
 ) -> core::result::Result<(Outcome, u64), RunError<S::Error>> {
+    let mut state = RunState::new(cfg);
+    run_quantized_with_forward(cfg, weights_blob_hash, req, sink, tier, move |cur, pos| {
+        forward_quantized::step(cfg, weights, &mut state, cur, pos)
+    })
+}
+
+/// The cert-issuing generation loop, parameterized on the per-step forward.
+///
+/// The CPU path (`run_quantized_with_sink`) passes `forward_quantized::step`; a
+/// GPU backend (a separate host crate — the `no_std` engine can't link Metal or
+/// CUDA) passes its own step producing the same logits, so the certificate is
+/// **identical** (it binds inputs + output tokens, both backend-independent).
+/// `forward(token, pos)` returns the logits for `token` at that position; the
+/// KV-cache state belongs to the closure.
+pub fn run_quantized_with_forward<S, F>(
+    cfg: &Config,
+    weights_blob_hash: &[u8; 32],
+    req: &Request,
+    sink: &mut S,
+    tier: u8,
+    mut forward: F,
+) -> core::result::Result<(Outcome, u64), RunError<S::Error>>
+where
+    S: CertSink,
+    F: FnMut(u32, usize) -> crate::error::Result<Tensor>,
+{
     let mut builder = CertBuilder::new();
     builder.declare_input("model_id", req.model_id.as_bytes());
     builder.declare_input("weights_hash", weights_blob_hash);
@@ -293,9 +319,7 @@ pub fn run_quantized_with_sink<S: CertSink>(
     let n_new_bytes = (req.n_new_tokens as u32).to_le_bytes();
     builder.declare_input("n_new_tokens", &n_new_bytes);
 
-    let mut state = RunState::new(cfg);
     let mut generated: Vec<u32> = Vec::with_capacity(req.n_new_tokens);
-
     let prompt_len = req.prompt_tokens.len();
     if prompt_len == 0 {
         return Err(RunError::Inference(crate::error::Error::InvalidShape(
@@ -311,8 +335,7 @@ pub fn run_quantized_with_sink<S: CertSink>(
 
     let mut cur = req.prompt_tokens[0];
     for pos in 0..total {
-        let logits = forward_quantized::step(cfg, weights, &mut state, cur, pos)
-            .map_err(RunError::Inference)?;
+        let logits = forward(cur, pos).map_err(RunError::Inference)?;
         let argmax = logits.argmax_last_dim().map_err(RunError::Inference)?;
         let picked = argmax_u32(&argmax);
         let next = if pos + 1 < prompt_len {
@@ -335,11 +358,5 @@ pub fn run_quantized_with_sink<S: CertSink>(
         .finalize_with_sink(sink, tier)
         .map_err(RunError::Sink)?;
 
-    Ok((
-        Outcome {
-            generated_tokens: generated,
-            cert,
-        },
-        cert_id,
-    ))
+    Ok((Outcome { generated_tokens: generated, cert }, cert_id))
 }
