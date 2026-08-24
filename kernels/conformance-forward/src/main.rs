@@ -9,6 +9,14 @@
 
 use std::ffi::c_void;
 use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
+use vitni_tensor::{Shape, Storage, Tensor};
+
+fn tvec(t: &Tensor) -> Vec<f32> {
+    match t.storage() {
+        Storage::Cpu(s) => s.as_f32_slice().to_vec(),
+        _ => panic!("expected CPU storage"),
+    }
+}
 
 fn lcg_vec(len: usize, seed: u64) -> Vec<f32> {
     let mut s = seed;
@@ -71,6 +79,49 @@ impl Gpu {
         cmd.wait_until_completed();
         let ptr = bo.contents() as *const f32;
         unsafe { std::slice::from_raw_parts(ptr, n) }.to_vec()
+    }
+    fn rms(&self, x: &[f32], w: &[f32], rows: usize, feat: usize, eps: f32) -> Vec<f32> {
+        let shared = MTLResourceOptions::StorageModeShared;
+        let bx = self.device.new_buffer_with_data(x.as_ptr() as *const c_void, (x.len() * 4) as u64, shared);
+        let bw = self.device.new_buffer_with_data(w.as_ptr() as *const c_void, (w.len() * 4) as u64, shared);
+        let bo = self.device.new_buffer((rows * feat * 4) as u64, shared);
+        let dims: [u32; 2] = [feat as u32, rows as u32];
+        let cmd = self.queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&self.pipeline);
+        enc.set_buffer(0, Some(&bx), 0);
+        enc.set_buffer(1, Some(&bw), 0);
+        enc.set_buffer(2, Some(&bo), 0);
+        enc.set_bytes(3, 8, dims.as_ptr() as *const c_void);
+        enc.set_bytes(4, 4, &eps as *const f32 as *const c_void);
+        let tg = 64u64.min(rows as u64).max(1);
+        let groups = (rows as u64 + tg - 1) / tg;
+        enc.dispatch_thread_groups(MTLSize::new(groups, 1, 1), MTLSize::new(tg, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        let ptr = bo.contents() as *const f32;
+        unsafe { std::slice::from_raw_parts(ptr, rows * feat) }.to_vec()
+    }
+    fn softmax(&self, x: &[f32], rows: usize, last: usize) -> Vec<f32> {
+        let shared = MTLResourceOptions::StorageModeShared;
+        let bx = self.device.new_buffer_with_data(x.as_ptr() as *const c_void, (x.len() * 4) as u64, shared);
+        let bo = self.device.new_buffer((rows * last * 4) as u64, shared);
+        let dims: [u32; 2] = [last as u32, rows as u32];
+        let cmd = self.queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&self.pipeline);
+        enc.set_buffer(0, Some(&bx), 0);
+        enc.set_buffer(1, Some(&bo), 0);
+        enc.set_bytes(2, 8, dims.as_ptr() as *const c_void);
+        let tg = 64u64.min(rows as u64).max(1);
+        let groups = (rows as u64 + tg - 1) / tg;
+        enc.dispatch_thread_groups(MTLSize::new(groups, 1, 1), MTLSize::new(tg, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        let ptr = bo.contents() as *const f32;
+        unsafe { std::slice::from_raw_parts(ptr, rows * last) }.to_vec()
     }
     fn q4k(&self, x: &[f32], w: &[u8], m: usize, k: usize, nsuper: usize) -> Vec<f32> {
         let shared = MTLResourceOptions::StorageModeShared;
@@ -249,6 +300,69 @@ fn softdiv_cross_vendor(kernel_src: &str) {
     println!();
 }
 
+fn forward_ops_conformance(src: &str) {
+    let bitcmp = |a: &[f32], b: &[f32]| -> (usize, i64) {
+        let exact = a.iter().zip(b).filter(|(c, g)| c.to_bits() == g.to_bits()).count();
+        let mx = a.iter().zip(b).map(|(c, g)| ulp(*c, *g)).max().unwrap_or(0);
+        (exact, mx)
+    };
+
+    // --- sqrt: is Metal's sqrt correctly-rounded (matches libm::sqrtf)? ---
+    let gsqrt = Gpu::new(src, "sqrt_kernel");
+    let ins: Vec<f32> = lcg_vec(3_000_000, 0x5017).iter().map(|v| v.abs() * 64.0 + 1e-6).collect();
+    let gs = gsqrt.expf(&ins); // in/out/n runner
+    let mism = ins.iter().zip(&gs).filter(|(x, g)| libm::sqrtf(**x).to_bits() != g.to_bits()).count();
+    println!(
+        "== diagnostic: Metal sqrt vs libm::sqrtf: {}/{} match -> {} ==",
+        ins.len() - mism, ins.len(),
+        if mism == 0 { "correctly-rounded (safe to use directly)" } else { "NOT correctly-rounded (needs software sqrt)" }
+    );
+    println!();
+
+    let mut fails = 0usize;
+    println!("== forward-pass ops: Metal vs vitni-tensor CPU ops ==");
+
+    // --- rms_norm ---
+    let grms = Gpu::new(src, "rms_kernel");
+    for &(rows, feat) in &[(1usize, 4usize), (4, 512), (8, 2048), (2, 4096), (16, 5632)] {
+        let x = lcg_vec(rows * feat, 0x2000 ^ (feat as u64));
+        let w = lcg_vec(feat, 0x3000 ^ (feat as u64));
+        let xt = Tensor::from_f32(x.clone(), Shape::new(&[rows, feat]).unwrap()).unwrap();
+        let wt = Tensor::from_f32(w.clone(), Shape::new(&[feat]).unwrap()).unwrap();
+        let cpu = tvec(&xt.rms_norm(&wt, 1e-5).unwrap());
+        let gpu = grms.rms(&x, &w, rows, feat, 1e-5);
+        let (ex, mx) = bitcmp(&cpu, &gpu);
+        let ok = ex == cpu.len();
+        println!("  rms_norm  [{}x{}]  exact {}/{}  maxULP {}  {}", rows, feat, ex, cpu.len(), mx, if ok { "OK" } else { "FAIL" });
+        if !ok { fails += 1; }
+    }
+    // --- softmax ---
+    let gsm = Gpu::new(src, "softmax_kernel");
+    for &(rows, last) in &[(1usize, 4usize), (4, 128), (8, 1024), (2, 4096), (32, 151)] {
+        let x = lcg_vec(rows * last, 0x4000 ^ (last as u64));
+        let xt = Tensor::from_f32(x.clone(), Shape::new(&[rows, last]).unwrap()).unwrap();
+        let cpu = tvec(&xt.softmax_last_dim().unwrap());
+        let gpu = gsm.softmax(&x, rows, last);
+        let (ex, mx) = bitcmp(&cpu, &gpu);
+        let ok = ex == cpu.len();
+        println!("  softmax   [{}x{}]  exact {}/{}  maxULP {}  {}", rows, last, ex, cpu.len(), mx, if ok { "OK" } else { "FAIL" });
+        if !ok { fails += 1; }
+    }
+    // --- silu ---
+    let gsl = Gpu::new(src, "silu_kernel");
+    for &n in &[4usize, 4096, 11008, 100_000] {
+        let x = lcg_vec(n, 0x6000 ^ (n as u64));
+        let xt = Tensor::from_f32(x.clone(), Shape::new(&[n]).unwrap()).unwrap();
+        let cpu = tvec(&xt.silu().unwrap());
+        let gpu = gsl.expf(&x); // in/out/n runner
+        let (ex, mx) = bitcmp(&cpu, &gpu);
+        let ok = ex == cpu.len();
+        println!("  silu      [{}]  exact {}/{}  maxULP {}  {}", n, ex, cpu.len(), mx, if ok { "OK" } else { "FAIL" });
+        if !ok { fails += 1; }
+    }
+    println!("  VERDICT: forward ops {}\n", if fails == 0 { "PASS — bit-identical to CPU" } else { "FAIL" });
+}
+
 fn q4k_conformance(q4k_src: &str) {
     let gpu = Gpu::new(q4k_src, "q4k_linear");
     println!("== Q4_K fused dequant+dot: Metal vs canonical_dot_q4k_fused ==");
@@ -423,6 +537,7 @@ fn main() {
     softdiv_cross_vendor(kernel_src);
     poly_isolation(kernel_src);
     q4k_conformance(include_str!("../../q4k.metal"));
+    forward_ops_conformance(include_str!("../../forward_ops.metal"));
 
     let inputs = build_inputs();
     println!("== expf conformance (Metal fast-math OFF vs libm::expf) ==");
