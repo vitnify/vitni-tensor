@@ -1209,7 +1209,19 @@ pub fn linear_q4_k_integer_parallel(
 /// dequant arithmetic is copied unchanged, and Q6_K_BLOCK_NUMEL (256) is a
 /// multiple of both CANON_LANES and CANON_CHUNK's divisor, so super-block
 /// boundaries never split a lane group or a chunk.
-pub fn canonical_dot_q6k_fused(x: &[f32], w_q6k: &[u8], n: usize) -> Result<f32> {
+///
+/// **This is an f32 REFERENCE, NOT the shipped Q6_K regime — do not issue or
+/// verify Q6_K certificates against it.** The forward (`linear_dispatch`)
+/// always computes Q6_K through the INTEGER path (`linear_q6_k_integer`), which
+/// quantizes the activations to int8 and does an exact integer dot. That is
+/// deliberately NOT bit-identical to this f32-dequant dot — they agree only to
+/// ~1e-4 (see `integer_q6k_agrees_with_float_on_same_activations`), because the
+/// integer path is lossy in the activation quantization. Unlike Q4_K — whose
+/// fused and shipped paths ARE bit-identical, so `canonical_dot_q4k_fused`
+/// keeps its name — there is no "canonical" f32 Q6_K regime. Renamed from
+/// `q6k_fused_f32_dot`, whose "canonical" wrongly implied this was the
+/// regime the certificate binds.
+pub fn q6k_fused_f32_dot(x: &[f32], w_q6k: &[u8], n: usize) -> Result<f32> {
     if w_q6k.len() % Q6_K_BLOCK_BYTES != 0 {
         return Err(Error::Internal("Q6_K byte length not a multiple of 210"));
     }
@@ -1320,7 +1332,7 @@ pub fn linear_q6_k_fused(
         let x_row = &x[b * in_feat..(b + 1) * in_feat];
         for o in 0..out_feat {
             let w_row = &w_q6k[o * row_bytes..(o + 1) * row_bytes];
-            y_out[b * out_feat + o] = canonical_dot_q6k_fused(x_row, w_row, in_feat)?;
+            y_out[b * out_feat + o] = q6k_fused_f32_dot(x_row, w_row, in_feat)?;
         }
     }
     Ok(())
@@ -1361,7 +1373,7 @@ pub fn linear_q6_k_fused_parallel(
             for (i, o) in slot.iter_mut().enumerate() {
                 let r = base + i;
                 let w_row = &w_q6k[r * row_bytes..(r + 1) * row_bytes];
-                *o = canonical_dot_q6k_fused(x_row, w_row, in_feat).unwrap_or(0.0);
+                *o = q6k_fused_f32_dot(x_row, w_row, in_feat).unwrap_or(0.0);
             }
         });
     }

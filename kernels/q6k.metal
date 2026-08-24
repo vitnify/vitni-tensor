@@ -3,7 +3,7 @@ using namespace metal;
 
 // ===================================================================
 // Q6_K fused dequant + canonical dot — bit-identical to
-// vitni_tensor::ops::quant::canonical_dot_q6k_fused. One thread per output row.
+// vitni_tensor::ops::quant::q6k_fused_f32_dot. One thread per output row.
 // Dequant is d*s*q (pure multiplies, no add/sub), so no contraction guard is
 // needed; the reduction is the same canonical discipline as matmul/Q4_K.
 // ===================================================================
