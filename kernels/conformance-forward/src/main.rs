@@ -103,6 +103,31 @@ impl Gpu {
         let ptr = bo.contents() as *const f32;
         unsafe { std::slice::from_raw_parts(ptr, rows * feat) }.to_vec()
     }
+    fn rope(&self, x: &[f32], cosc: &[f32], sinc: &[f32], seq: usize, n_heads: usize, head_dim: usize) -> Vec<f32> {
+        let shared = MTLResourceOptions::StorageModeShared;
+        let bx = self.device.new_buffer_with_data(x.as_ptr() as *const c_void, (x.len() * 4) as u64, shared);
+        let bc = self.device.new_buffer_with_data(cosc.as_ptr() as *const c_void, (cosc.len() * 4) as u64, shared);
+        let bs = self.device.new_buffer_with_data(sinc.as_ptr() as *const c_void, (sinc.len() * 4) as u64, shared);
+        let bo = self.device.new_buffer((x.len() * 4) as u64, shared);
+        let dims: [u32; 3] = [seq as u32, n_heads as u32, head_dim as u32];
+        let cmd = self.queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&self.pipeline);
+        enc.set_buffer(0, Some(&bx), 0);
+        enc.set_buffer(1, Some(&bc), 0);
+        enc.set_buffer(2, Some(&bs), 0);
+        enc.set_buffer(3, Some(&bo), 0);
+        enc.set_bytes(4, 12, dims.as_ptr() as *const c_void);
+        let total = (seq * n_heads) as u64;
+        let tg = 64u64.min(total).max(1);
+        let groups = (total + tg - 1) / tg;
+        enc.dispatch_thread_groups(MTLSize::new(groups, 1, 1), MTLSize::new(tg, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        let ptr = bo.contents() as *const f32;
+        unsafe { std::slice::from_raw_parts(ptr, x.len()) }.to_vec()
+    }
     fn softmax(&self, x: &[f32], rows: usize, last: usize) -> Vec<f32> {
         let shared = MTLResourceOptions::StorageModeShared;
         let bx = self.device.new_buffer_with_data(x.as_ptr() as *const c_void, (x.len() * 4) as u64, shared);
@@ -358,6 +383,35 @@ fn forward_ops_conformance(src: &str) {
         let (ex, mx) = bitcmp(&cpu, &gpu);
         let ok = ex == cpu.len();
         println!("  silu      [{}]  exact {}/{}  maxULP {}  {}", n, ex, cpu.len(), mx, if ok { "OK" } else { "FAIL" });
+        if !ok { fails += 1; }
+    }
+    // --- rope (apply, reading a CPU-precomputed cache) ---
+    let grope = Gpu::new(src, "rope_apply");
+    for &(seq, n_heads, head_dim) in &[(1usize, 4usize, 64usize), (8, 32, 128), (4, 8, 64), (16, 6, 128)] {
+        let theta = 10000.0f32;
+        let offset = 0usize;
+        let half = head_dim / 2;
+        let x = lcg_vec(seq * n_heads * head_dim, 0x7000 ^ (head_dim as u64) ^ (seq as u64) << 8);
+        // Replicate rope()'s cache exactly (same libm calls + order).
+        let inv_freq: Vec<f32> = (0..half)
+            .map(|i| 1.0 / libm::powf(theta, (2 * i) as f32 / head_dim as f32))
+            .collect();
+        let mut cosc = vec![0f32; seq * half];
+        let mut sinc = vec![0f32; seq * half];
+        for s in 0..seq {
+            let pos = (offset + s) as f32;
+            for i in 0..half {
+                let angle = pos * inv_freq[i];
+                cosc[s * half + i] = libm::cosf(angle);
+                sinc[s * half + i] = libm::sinf(angle);
+            }
+        }
+        let xt = Tensor::from_f32(x.clone(), Shape::new(&[seq, n_heads, head_dim]).unwrap()).unwrap();
+        let cpu = tvec(&xt.rope(theta, offset).unwrap());
+        let gpu = grope.rope(&x, &cosc, &sinc, seq, n_heads, head_dim);
+        let (ex, mx) = bitcmp(&cpu, &gpu);
+        let ok = ex == cpu.len();
+        println!("  rope      [{}x{}x{}]  exact {}/{}  maxULP {}  {}", seq, n_heads, head_dim, ex, cpu.len(), mx, if ok { "OK" } else { "FAIL" });
         if !ok { fails += 1; }
     }
     println!("  VERDICT: forward ops {}\n", if fails == 0 { "PASS — bit-identical to CPU" } else { "FAIL" });

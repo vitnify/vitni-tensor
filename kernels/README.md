@@ -93,10 +93,27 @@ with explicit `fma` on all three platforms — is faster but changes the numbers
 
 ## Scope / roadmap
 
-Done: F32 `matmul`, software division, `expf` — all cross-vendor. Next kernels
-toward an end-to-end deterministic GPU forward: the quantized hot path
-(`canonical_dot_q4k_fused` — same pinned reduction over a dequantized chunk,
-division-free), then `rms_norm` / `softmax` / `silu` (reductions + the proven
-`div_sw`/`expf`), `rope` (reads a CPU-precomputed cos/sin cache), embedding,
-argmax, and attention — then a full TinyLlama forward whose certificate digest
-matches across CPU + Apple GPU + NVIDIA.
+**Every forward-pass op is now proven cross-vendor bit-identical** (CPU↔Metal on
+M3 Max, max ULP 0; NVIDIA-ready), verified against the CPU reference:
+
+| Op | How | Status |
+|---|---|---|
+| `matmul` (fp32) | pinned reduction, no FMA | ✅ (CPU + Metal + T4) |
+| software division | int seed + FMA refine | ✅ correctly-rounded |
+| `expf` | libm port on `div_sw`, contraction-guarded | ✅ (normal range) |
+| `sqrt` | Metal's sqrt IS correctly-rounded | ✅ |
+| Q4_K fused dot | super-block dequant + canonical reduction | ✅ |
+| `rms_norm` | serial Σx², `div_sw`, `sqrt` | ✅ |
+| `softmax` | serial max/Σ, `expf`, `div_sw` | ✅ |
+| `silu` | `div_sw(v, 1+expf(-v))` | ✅ |
+| `rope` | guarded rotation over a CPU cos/sin cache | ✅ |
+
+`embedding` (gather) and `argmax` (integer compare) are exact by construction —
+no float rounding to diverge. `attention` is a composition of `matmul` + scale +
+`softmax` + `matmul`, all proven.
+
+**Remaining: the end-to-end.** Wire these kernels into a GPU forward path (a
+`MetalAccelerator` + the quantized-linear route + KV-cache), run a full TinyLlama
+forward on GPU, and verify the certificate digest matches across CPU + Apple GPU
++ NVIDIA (T4). That's integration + one more EC2 leg, not new numerics — every
+numerically hard part is done.

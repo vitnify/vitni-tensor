@@ -143,6 +143,35 @@ kernel void softmax_kernel(
     for (uint i = 0u; i < last; i++) { orow[i] = orow[i] * inv; }
 }
 
+// RoPE apply: (a,b) -> (a*c - b*s, a*s + b*c), reading a CPU-precomputed
+// cos/sin cache (the sinf/cosf that build it use f64 and stay on the CPU).
+// One thread per (seq, head). Products are guarded so the a*c-b*s / a*s+b*c
+// stay separately rounded, matching the CPU's non-fused form.
+kernel void rope_apply(
+    device const float* x    [[buffer(0)]],
+    device const float* cosc [[buffer(1)]],
+    device const float* sinc [[buffer(2)]],
+    device       float* out  [[buffer(3)]],
+    constant     uint*  dims [[buffer(4)]],  // {seq, n_heads, head_dim}
+    uint gid [[thread_position_in_grid]])
+{
+    uint seq = dims[0], n_heads = dims[1], head_dim = dims[2];
+    if (gid >= seq * n_heads) return;
+    uint s = gid / n_heads;
+    uint hd = head_dim / 2u;        // 'half' is a reserved MSL type name
+    uint head_off = gid * head_dim;
+    for (uint i = 0u; i < hd; i++) {
+        float a = x[head_off + 2u * i];
+        float b = x[head_off + 2u * i + 1u];
+        float c = cosc[s * hd + i];
+        float sn = sinc[s * hd + i];
+        volatile float p1 = a * c; volatile float p2 = b * sn;
+        out[head_off + 2u * i] = p1 - p2;
+        volatile float p3 = a * sn; volatile float p4 = b * c;
+        out[head_off + 2u * i + 1u] = p3 + p4;
+    }
+}
+
 // silu(x) = x / (1 + e^-x)
 kernel void silu_kernel(
     device const float* x   [[buffer(0)]],
