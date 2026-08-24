@@ -1,0 +1,26 @@
+# vitni-tensor-metal — a real GPU inference backend for the deterministic engine.
+#
+# The no_std vitni-tensor core defines the seam (inference::run_quantized_with_forward);
+# this host crate provides the Metal implementation that runs the full quantized
+# forward on an Apple GPU and issues a certificate IDENTICAL to the CPU's, because
+# its logits are bit-for-bit identical (proven in kernels/conformance-forward and,
+# for NVIDIA, kernels/cuda_forward_conformance.cu).
+#
+# std + macOS + Metal, so it is its own workspace (detached from the no_std core)
+# and never built on Linux CI.
+[package]
+name = "vitni-tensor-metal"
+version = "0.1.0"
+edition = "2021"
+description = "Metal (Apple GPU) inference backend for vitni-tensor, bit-identical to the CPU engine."
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+vitni-tensor = { path = ".." }
+metal = "0.29"
+libm = "=0.2.16"
+
+[dev-dependencies]
+blake3 = "1"
