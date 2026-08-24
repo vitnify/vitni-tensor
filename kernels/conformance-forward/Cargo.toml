@@ -1,0 +1,21 @@
+# Forward-pass op conformance: proves the GPU kernels for the transcendental
+# (expf) and the quantized hot path match the CPU reference bit-for-bit.
+# std + macOS + Metal, so its own [workspace] detaches it from the no_std
+# vitni-tensor workspace. libm is pinned to the engine's version so `expf`
+# ground truth is the exact function vitni-tensor calls.
+[package]
+name = "vitni-tensor-forward-conformance"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "conformance-forward"
+path = "src/main.rs"
+
+[dependencies]
+metal = "0.29"
+libm = "=0.2.16"
+vitni-tensor = { path = "../.." }
