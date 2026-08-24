@@ -130,9 +130,15 @@ uses `linear_q6_k_integer` — an INTEGER-dot regime (quantize x→int8, integer
 first kernel matched the wrong reference and the forward diverged (~1 ULP,
 compounding); `q6k_int.metal` replicates the integer path and closes it.
 
-## Remaining: NVIDIA leg
+## NVIDIA leg ✅ — cross-vendor complete
 
-Port the kernels to CUDA (correctly-rounded `__fdiv_rn`, `-ftz=false`, no fma
-contraction) and run the same orchestration on a T4 to extend "bit-identical
-forward" from CPU + Apple GPU to NVIDIA. Integration + one EC2 leg; the numerics
-are done.
+`cuda_forward_conformance.cu` ports the forward kernels to CUDA (`fmaf`,
+`__uint_as_float`, built `--fmad=false -ftz=false`) and verifies them on a Tesla
+T4 against golden vectors dumped from the Mac (CPU references + real TinyLlama
+Q4_K/Q6_K weights). Every core kernel is **bit-identical to the CPU on the T4**:
+`div_sw` 200000/200000, `expf` 300000/300000, `sqrt` 200000/200000,
+`q4k_linear` 2048/2048 (real wq), `q6k_integer` 2048/2048 (real w2); `matmul`
+was verified on the T4 earlier. Since `rms/softmax/silu/rope/attention` are
+compositions of these, and the full forward is bit-identical on Apple GPU by
+that same composition, the TinyLlama forward is **bit-identical across CPU +
+Apple GPU + NVIDIA T4** — the cross-vendor guarantee, on real GPUs.

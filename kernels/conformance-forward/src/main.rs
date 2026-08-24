@@ -22,6 +22,64 @@ fn argmax_i(v: &[f32]) -> usize {
     bi
 }
 
+fn dump_golden(path: &str) {
+    use std::io::Write;
+    use vitni_tensor::model::{config::Config, gguf::GgufFile, quant_weights::QuantizedWeights};
+    let blob = std::fs::read("/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf").unwrap();
+    let gguf = GgufFile::parse(&blob).unwrap();
+    let cfg = Config::from_gguf(&gguf).unwrap();
+    let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+    let l0 = &weights.layers[0];
+
+    let mut out: Vec<u8> = Vec::new();
+    let mut cases: u32 = 0;
+    let mut body: Vec<u8> = Vec::new();
+    let mut wu32 = |b: &mut Vec<u8>, v: u32| b.extend_from_slice(&v.to_le_bytes());
+    let mut wf32 = |b: &mut Vec<u8>, v: &[f32]| { for x in v { b.extend_from_slice(&x.to_le_bytes()); } };
+
+    let mut push_case = |body: &mut Vec<u8>, cases: &mut u32, op: u32, p: [u32; 4], inp: &[f32], w: &[u8], outp: &[f32]| {
+        wu32(body, op);
+        for pp in p { wu32(body, pp); }
+        wu32(body, inp.len() as u32); wf32(body, inp);
+        wu32(body, w.len() as u32); body.extend_from_slice(w);
+        wu32(body, outp.len() as u32); wf32(body, outp);
+        *cases += 1;
+    };
+
+    // div: golden = a/b (CPU hardware, correctly rounded)
+    let a = lcg_vec(200_000, 0xD1);
+    let b = lcg_vec(200_000, 0xD2);
+    let mut din = a.clone(); din.extend_from_slice(&b);
+    let dout: Vec<f32> = a.iter().zip(&b).map(|(x, y)| x / y).collect();
+    push_case(&mut body, &mut cases, 1, [a.len() as u32, 0, 0, 0], &din, &[], &dout);
+    // expf
+    let xe: Vec<f32> = lcg_vec(300_000, 0xE1).iter().map(|v| v * 55.0 - 45.0).collect();
+    let oe: Vec<f32> = xe.iter().map(|v| libm::expf(*v)).collect();
+    push_case(&mut body, &mut cases, 2, [xe.len() as u32, 0, 0, 0], &xe, &[], &oe);
+    // sqrt
+    let xs: Vec<f32> = lcg_vec(200_000, 0xF1).iter().map(|v| v.abs() * 80.0 + 1e-6).collect();
+    let os: Vec<f32> = xs.iter().map(|v| libm::sqrtf(*v)).collect();
+    push_case(&mut body, &mut cases, 3, [xs.len() as u32, 0, 0, 0], &xs, &[], &os);
+    // q4k_linear: real wq + random x[dim]  (linear_q4_k_fused)
+    let q_out = cfg.n_heads * cfg.head_size();
+    let xq = lcg_vec(cfg.dim, 0x4A);
+    let mut yq = vec![0f32; q_out];
+    vitni_tensor::ops::quant::linear_q4_k_fused(&xq, l0.wq.bytes, &mut yq, 1, cfg.dim, q_out).unwrap();
+    push_case(&mut body, &mut cases, 4, [cfg.dim as u32, q_out as u32, (cfg.dim / 256) as u32, 0], &xq, l0.wq.bytes, &yq);
+    // q6k_integer: real w2 + random x[hidden]  (linear_q6_k_integer)
+    let xd = lcg_vec(cfg.hidden_dim, 0x6A);
+    let mut yd = vec![0f32; cfg.dim];
+    vitni_tensor::ops::quant::linear_q6_k_integer(&xd, l0.w2.bytes, &mut yd, 1, cfg.hidden_dim, cfg.dim).unwrap();
+    push_case(&mut body, &mut cases, 5, [cfg.hidden_dim as u32, cfg.dim as u32, (cfg.hidden_dim / 256) as u32, 0], &xd, l0.w2.bytes, &yd);
+
+    out.extend_from_slice(&0x564E_5447u32.to_le_bytes()); // "VNTG"
+    out.extend_from_slice(&cases.to_le_bytes());
+    out.extend_from_slice(&body);
+    let mut f = std::fs::File::create(path).unwrap();
+    f.write_all(&out).unwrap();
+    println!("wrote {} golden cases ({} bytes) to {}", cases, out.len(), path);
+}
+
 fn end_to_end() {
     use vitni_tensor::model::{config::Config, forward::RunState, forward_quantized, gguf::GgufFile, quant_weights::QuantizedWeights};
     let path = "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf";
@@ -430,7 +488,7 @@ fn softdiv_cross_vendor(kernel_src: &str) {
 
 fn q6k_conformance(q6k_src: &str) {
     let gpu = Gpu::new(q6k_src, "q6k_linear");
-    println!("== Q6_K fused dequant+dot: Metal vs canonical_dot_q6k_fused ==");
+    println!("== Q6_K fused dequant+dot: Metal vs q6k_fused_f32_dot ==");
     let shapes: &[(usize, usize, &str)] = &[
         (256, 4, "1 super-block"),
         (512, 4, "2 super-blocks"),
@@ -457,7 +515,7 @@ fn q6k_conformance(q6k_src: &str) {
         let mut cpu = vec![0f32; m];
         for i in 0..m {
             let wrow = &w[i * nsuper * 210..(i + 1) * nsuper * 210];
-            cpu[i] = vitni_tensor::ops::quant::canonical_dot_q6k_fused(&x, wrow, k).unwrap();
+            cpu[i] = vitni_tensor::ops::quant::q6k_fused_f32_dot(&x, wrow, k).unwrap();
         }
         let g = gpu.q4k(&x, &w, m, k, nsuper); // generic dispatch runs q6k_linear
         let exact = cpu.iter().zip(&g).filter(|(c, gg)| c.to_bits() == gg.to_bits()).count();
@@ -823,6 +881,7 @@ fn main() {
     forward_ops_conformance(include_str!("../../forward_ops.metal"));
     attention_conformance(include_str!("../../forward_ops.metal"));
     end_to_end();
+    dump_golden("/private/tmp/claude-501/-Users-nickp-Downloads-InVent/0e6ca708-7fd1-4d6f-ba6a-adf2b733a7a5/scratchpad/golden.bin");
 
     let inputs = build_inputs();
     println!("== expf conformance (Metal fast-math OFF vs libm::expf) ==");
