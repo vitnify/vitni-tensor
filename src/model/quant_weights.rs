@@ -314,6 +314,53 @@ mod tests {
         assert_eq!(wcls.shape, vec![32u64, 8u64]);
     }
 
+    /// Run the FULL composed quantized forward over a tiny synthetic model, twice, and
+    /// assert it reproduces bit-identically.
+    ///
+    /// Purpose: give miri (`cargo +nightly miri test --lib`) coverage of the *composed*
+    /// quantized forward — embedding lookup, RMSNorm, Q4_0 matmul, RoPE, GQA attention
+    /// over the KV-cache, softmax, FFN, residuals, final logits + cert. The per-kernel
+    /// unit tests already run under miri, but the composition (how they chain, plus KV-
+    /// cache management and residual accumulation) is only otherwise exercised by the
+    /// real ~1B-model integration test, which is far too large for miri to run. Weights
+    /// are zero-valued: this is a memory-safety / UB check, not a numerics check, and the
+    /// full code path executes regardless of the values.
+    #[test]
+    fn tiny_quantized_forward_runs_and_reproduces() {
+        use crate::model::inference;
+        // GQA like TinyLlama: n_heads=4, n_kv_heads=2 (ratio 2), head_size=8 (even → RoPE).
+        let raw = build_tiny_llama_gguf(2, 32, 64, 8, 4, 2);
+        // A real GGUF is loaded via fs::read → a Vec<u8> whose base is >=16-aligned. A
+        // synthetic in-memory Vec<u8> is only 1-aligned (and miri enforces exactly that),
+        // which our own f32_view alignment guard would (correctly) reject. Copy into a
+        // 4-aligned backing to mirror a real file load; the tensor offsets are already
+        // multiples of 4 within the data section, so every F32 tensor lands 4-aligned.
+        let words: alloc::vec::Vec<u32> = {
+            let mut w = alloc::vec![0u32; raw.len().div_ceil(4)];
+            let dst =
+                unsafe { core::slice::from_raw_parts_mut(w.as_mut_ptr() as *mut u8, w.len() * 4) };
+            dst[..raw.len()].copy_from_slice(&raw);
+            w
+        };
+        let buf: &[u8] =
+            unsafe { core::slice::from_raw_parts(words.as_ptr() as *const u8, raw.len()) };
+        let gguf = GgufFile::parse(buf).expect("parse tiny gguf");
+        let cfg = Config::from_gguf(&gguf).expect("config from tiny gguf");
+        let weights = QuantizedWeights::from_gguf(&gguf, &cfg).expect("weights from tiny gguf");
+        let weights_hash = *blake3::hash(buf).as_bytes();
+
+        let prompt: alloc::vec::Vec<u32> = alloc::vec![1, 2, 3]; // token ids < vocab (8)
+        let req = inference::Request {
+            model_id: "miri-tiny-q4_0",
+            prompt_tokens: &prompt,
+            n_new_tokens: 3, // multi-step decode → KV-cache grows across positions
+        };
+        let a = inference::run_quantized(&cfg, &weights, &weights_hash, &req).expect("run a");
+        let b = inference::run_quantized(&cfg, &weights, &weights_hash, &req).expect("run b");
+        assert_eq!(a.generated_tokens, b.generated_tokens, "quantized forward non-deterministic");
+        assert_eq!(a.cert.digest, b.cert.digest, "quantized cert digest not reproducible");
+    }
+
     // ---------------------------------------------------------------
     // GGUF synthesis helpers — hand-build a llama-shaped GGUF buffer
     // without pulling in llama.cpp's convert.py. These match the tensor
