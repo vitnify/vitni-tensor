@@ -65,18 +65,10 @@ impl<'a> Weights<'a> {
             return Err(Error::InvalidShape("weights blob shorter than header"));
         }
         let weights_bytes = &blob[HEADER_BYTES..];
-        if weights_bytes.len() % 4 != 0 {
-            return Err(Error::InvalidShape("weights blob not 4-byte aligned"));
-        }
-        // SAFETY: f32 has 4-byte alignment requirement; the blob slice
-        // points at the start of the weights region which is f32-aligned
-        // by file-format contract. Bounds checked above.
-        let weights_f32: &[f32] = unsafe {
-            core::slice::from_raw_parts(
-                weights_bytes.as_ptr() as *const f32,
-                weights_bytes.len() / 4,
-            )
-        };
+        // Alignment-checked reinterpret: the 28-byte header keeps the weights region a
+        // multiple of 4 into the blob, but the blob's base pointer is only guaranteed
+        // 1-byte aligned by the `&[u8]` type, so verify rather than assume.
+        let weights_f32: &[f32] = crate::model::f32_view(weights_bytes)?;
 
         let head_size = cfg.head_size();
         // Position cursor (in f32 elements) + take helper as plain

@@ -692,10 +692,9 @@ fn linear_dispatch(
                     "linear_dispatch F32: weight size mismatch",
                 ));
             }
-            // SAFETY: dtype is F32; bytes are 4-byte LE floats.
-            let w_f32: &[f32] = unsafe {
-                core::slice::from_raw_parts(w.bytes.as_ptr() as *const f32, out_feat * in_feat)
-            };
+            // Alignment-checked reinterpret: F32 dtype does not guarantee the tensor
+            // offset is 4-aligned (a malformed file would otherwise be UB here).
+            let w_f32: &[f32] = crate::model::f32_view(w.bytes)?;
             // MUST go through the canonical reduction like every other arm.
             // This was a plain serial `acc += x[i] * row[i]` — regime-1
             // semantics — while the certificate declared regime 3. Every
@@ -837,12 +836,8 @@ fn embedding_row(table: &QuantTensor<'_>, row: usize, dim: usize) -> Result<Vec<
                     "embedding_row F32: table too small for token id",
                 ));
             }
-            let w_f32: &[f32] = unsafe {
-                core::slice::from_raw_parts(
-                    table.bytes.as_ptr() as *const f32,
-                    table.bytes.len() / 4,
-                )
-            };
+            // Alignment-checked reinterpret (see linear_dispatch F32 arm).
+            let w_f32: &[f32] = crate::model::f32_view(table.bytes)?;
             Ok(w_f32[row * dim..(row + 1) * dim].to_vec())
         }
         GgufTensorType::Q4_0 => {

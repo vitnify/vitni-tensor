@@ -234,16 +234,9 @@ fn read_f32_tensor<'a>(gguf: &GgufFile<'a>, name: &str) -> Result<&'a [f32]> {
             "gguf: expected F32 norm-weight tensor, got something else",
         ));
     }
-    if t.bytes.len() % 4 != 0 {
-        return Err(Error::Internal(
-            "gguf: F32 tensor byte length not a multiple of 4",
-        ));
-    }
-    // SAFETY: dtype is F32 (checked), so 4-byte alignment is correct
-    // and bytes / 4 yields the element count.
-    Ok(unsafe {
-        core::slice::from_raw_parts(t.bytes.as_ptr() as *const f32, t.bytes.len() / 4)
-    })
+    // Alignment-checked reinterpret: dtype being F32 does NOT guarantee the tensor's
+    // byte offset is 4-aligned; a malformed file is rejected rather than UB.
+    crate::model::f32_view(t.bytes)
 }
 
 /// Like `read_f32_tensor` but returns `None` if the tensor is absent
@@ -255,13 +248,8 @@ fn read_f32_tensor_opt<'a>(gguf: &GgufFile<'a>, name: &str) -> Result<Option<&'a
             if t.dtype != GgufTensorType::F32 {
                 return Err(Error::Internal("gguf: expected F32 bias tensor"));
             }
-            if t.bytes.len() % 4 != 0 {
-                return Err(Error::Internal("gguf: F32 bias byte length not a multiple of 4"));
-            }
-            // SAFETY: dtype is F32 (checked); 4-byte alignment holds.
-            Ok(Some(unsafe {
-                core::slice::from_raw_parts(t.bytes.as_ptr() as *const f32, t.bytes.len() / 4)
-            }))
+            // Alignment-checked reinterpret (see read_f32_tensor).
+            Ok(Some(crate::model::f32_view(t.bytes)?))
         }
     }
 }
