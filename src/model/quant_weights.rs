@@ -329,25 +329,12 @@ mod tests {
     fn tiny_quantized_forward_runs_and_reproduces() {
         use crate::model::inference;
         // GQA like TinyLlama: n_heads=4, n_kv_heads=2 (ratio 2), head_size=8 (even → RoPE).
-        let raw = build_tiny_llama_gguf(2, 32, 64, 8, 4, 2);
-        // A real GGUF is loaded via fs::read → a Vec<u8> whose base is >=16-aligned. A
-        // synthetic in-memory Vec<u8> is only 1-aligned (and miri enforces exactly that),
-        // which our own f32_view alignment guard would (correctly) reject. Copy into a
-        // 4-aligned backing to mirror a real file load; the tensor offsets are already
-        // multiples of 4 within the data section, so every F32 tensor lands 4-aligned.
-        let words: alloc::vec::Vec<u32> = {
-            let mut w = alloc::vec![0u32; raw.len().div_ceil(4)];
-            let dst =
-                unsafe { core::slice::from_raw_parts_mut(w.as_mut_ptr() as *mut u8, w.len() * 4) };
-            dst[..raw.len()].copy_from_slice(&raw);
-            w
-        };
-        let buf: &[u8] =
-            unsafe { core::slice::from_raw_parts(words.as_ptr() as *const u8, raw.len()) };
-        let gguf = GgufFile::parse(buf).expect("parse tiny gguf");
+        // AlignedBytes mirrors a real fs::read blob's alignment (see its doc).
+        let buf = build_tiny_llama_gguf(2, 32, 64, 8, 4, 2);
+        let gguf = GgufFile::parse(&buf).expect("parse tiny gguf");
         let cfg = Config::from_gguf(&gguf).expect("config from tiny gguf");
         let weights = QuantizedWeights::from_gguf(&gguf, &cfg).expect("weights from tiny gguf");
-        let weights_hash = *blake3::hash(buf).as_bytes();
+        let weights_hash = *blake3::hash(&buf).as_bytes();
 
         let prompt: alloc::vec::Vec<u32> = alloc::vec![1, 2, 3]; // token ids < vocab (8)
         let req = inference::Request {
@@ -367,6 +354,36 @@ mod tests {
     // names and metadata keys llama.cpp writes for Llama-family models.
     // ---------------------------------------------------------------
 
+    /// A 4-byte-aligned byte buffer for synthetic GGUFs. A real GGUF is loaded via
+    /// `fs::read` → a `Vec<u8>` whose base is >=16-aligned, but a synthetic in-memory
+    /// `Vec<u8>` is only 1-aligned (miri enforces exactly that), which the `f32_view`
+    /// guard correctly rejects when it reads an F32 tensor. Backing the bytes with a
+    /// `Vec<u32>` makes the base 4-aligned, so these tests mirror a real file load and
+    /// run clean under miri. Derefs to `[u8]`, so it drops straight into `GgufFile::parse`
+    /// and `blake3::hash`.
+    struct AlignedBytes {
+        words: alloc::vec::Vec<u32>,
+        len: usize,
+    }
+    impl AlignedBytes {
+        fn from(bytes: &[u8]) -> Self {
+            let mut words = alloc::vec![0u32; bytes.len().div_ceil(4)];
+            // SAFETY: `words` is 4-aligned; view it as bytes to copy the payload in.
+            let dst = unsafe {
+                core::slice::from_raw_parts_mut(words.as_mut_ptr() as *mut u8, words.len() * 4)
+            };
+            dst[..bytes.len()].copy_from_slice(bytes);
+            Self { words, len: bytes.len() }
+        }
+    }
+    impl core::ops::Deref for AlignedBytes {
+        type Target = [u8];
+        fn deref(&self) -> &[u8] {
+            // SAFETY: `words` is 4-aligned (>= align 1) and holds `len` (<= words.len()*4) bytes.
+            unsafe { core::slice::from_raw_parts(self.words.as_ptr() as *const u8, self.len) }
+        }
+    }
+
     fn build_tiny_llama_gguf(
         n_layers: usize,
         dim: usize,
@@ -374,7 +391,7 @@ mod tests {
         vocab: usize,
         n_heads: usize,
         n_kv_heads: usize,
-    ) -> Vec<u8> {
+    ) -> AlignedBytes {
         build_tiny_llama_gguf_inner(n_layers, dim, hidden_dim, vocab, n_heads, n_kv_heads, false)
     }
 
@@ -385,7 +402,7 @@ mod tests {
         vocab: usize,
         n_heads: usize,
         n_kv_heads: usize,
-    ) -> Vec<u8> {
+    ) -> AlignedBytes {
         build_tiny_llama_gguf_inner(n_layers, dim, hidden_dim, vocab, n_heads, n_kv_heads, true)
     }
 
@@ -398,7 +415,7 @@ mod tests {
         n_heads: usize,
         n_kv_heads: usize,
         include_output: bool,
-    ) -> Vec<u8> {
+    ) -> AlignedBytes {
         let mut buf: Vec<u8> = Vec::new();
 
         // ---- Header ----
@@ -503,7 +520,10 @@ mod tests {
             .sum();
         buf.extend(core::iter::repeat(0u8).take(data_len as usize));
 
-        buf
+        // Return a 4-aligned copy so the parser sees the alignment a real fs::read blob
+        // has (see AlignedBytes) — otherwise the f32_view guard rejects F32 tensors under
+        // miri, where an in-memory Vec<u8> is only 1-aligned.
+        AlignedBytes::from(&buf)
     }
 
     fn write_string(buf: &mut Vec<u8>, s: &str) {
