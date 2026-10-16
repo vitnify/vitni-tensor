@@ -1,10 +1,14 @@
 # vitni-tensor
 
+[![crates.io](https://img.shields.io/crates/v/vitni-tensor.svg)](https://crates.io/crates/vitni-tensor)
+[![CI](https://github.com/vitnify/vitni-tensor/actions/workflows/ci.yml/badge.svg)](https://github.com/vitnify/vitni-tensor/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **Deterministic, `no_std` tensor engine for verifiable LLM inference.** The same
 inputs produce the **same output bits on different CPUs** — across vendors and
 instruction sets — by fixing reduction order in floating point and doing k-quant
-matmuls in exact integers. It runs stock GGUF models and emits a `vitnify-receipt v1`
-model-computation digest for every run.
+matmuls in exact integers. It runs stock GGUF models and emits a `vitnify-receipt v2`
+model-computation digest — binding the numerical regime (`vitni-regime-2`) — for every run.
 
 vitni-tensor is the deterministic engine under [vitnify](https://vitnify.com) —
 execution receipts for AI agents.
@@ -22,7 +26,7 @@ path, so a run can be **reproduced bit-for-bit** by an independent party and cer
   optional attention biases; RMSNorm; SwiGLU; KV cache.
 - Quantized matmul kernels: **F32 · Q4_0 · Q4_K · Q5_0 · Q6_K · Q8_0**.
 - Pinned-order fp32 dot + exact-integer k-quant dots; deterministic `libm` transcendentals.
-- A per-run **`vitnify-receipt v1`** model-computation digest (BLAKE3).
+- A per-run **`vitnify-receipt v2`** model-computation digest (BLAKE3), binding the numerical regime.
 
 ## The receipt binary
 
@@ -63,6 +67,6 @@ vitni-tensor is the deterministic engine in a three-repo stack:
   containment, deterministic replay, and signed execution receipts that embed this
   engine's digest.
 - **[vitnify-receipt-spec](https://github.com/vitnify/vitnify-receipt-spec)** — the
-  canonical `vitnify-receipt v1` format, including the conformance anchor this engine's
+  canonical `vitnify-receipt v2` format, including the conformance anchor this engine's
   digest reproduces.
 - **[vitnify.com](https://vitnify.com)** — the project.
