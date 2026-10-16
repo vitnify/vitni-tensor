@@ -716,20 +716,25 @@ fn linear_dispatch(
             // reading each value exactly once.
             #[cfg(feature = "std-parallel")]
             {
-                // Row-parallel: bit-identical, because each output row is an
-                // independent reduction. Threshold keeps small projections
-                // (norms, tiny heads) off the thread pool, where spawn cost
-                // would dominate the work.
+                // Row-parallel over the SAME fused f32 kernel the serial path uses,
+                // so the parallel build is bit-identical to serial (each output row
+                // is an independent canonical_dot; the split cannot reach inside one
+                // — asserted by parallel_q4k_matches_serial_at_every_thread_count).
+                // NOT the int8-activation integer kernel: that is a different, lossy
+                // reduction and disagrees with the fused path, which would make the
+                // certified digest depend on whether std-parallel was compiled in.
+                // Threshold keeps small projections (norms, tiny heads) off the pool,
+                // where spawn cost would dominate.
                 const PAR_MIN_ROWS: usize = 512;
                 if out_feat >= PAR_MIN_ROWS {
                     let t = std::thread::available_parallelism()
                         .map(|v| v.get())
                         .unwrap_or(1);
-                    ops::quant::linear_q4_k_integer_parallel(
+                    ops::quant::linear_q4_k_fused_parallel(
                         x, w.bytes, &mut y, 1, in_feat, out_feat, t,
                     )?;
                 } else {
-                    ops::quant::linear_q4_k_integer(x, w.bytes, &mut y, 1, in_feat, out_feat)?;
+                    ops::quant::linear_q4_k_fused(x, w.bytes, &mut y, 1, in_feat, out_feat)?;
                 }
             }
             #[cfg(not(feature = "std-parallel"))]

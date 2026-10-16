@@ -31,8 +31,16 @@ command -v jq >/dev/null || { echo "check-anchors: jq is required" >&2; exit 2; 
 MANIFEST="regime-manifest.json"
 [ -f "$MANIFEST" ] || { echo "check-anchors: $MANIFEST not found" >&2; exit 2; }
 
-echo "check-anchors: building gen-anchors (release)…"
-cargo build --release --bin gen-anchors >/dev/null 2>&1
+# VITNI_ANCHOR_FEATURES lets CI run the guard under a cargo feature (e.g.
+# `std-parallel`) so the parallel build is checked against the same serial anchors —
+# the anchors are the serial/default contract, and any build that computes different
+# bits (as the old integer Q4_K path did) must fail here, not ship silently.
+FEAT="${VITNI_ANCHOR_FEATURES:-}"
+feat_args=""
+[ -n "$FEAT" ] && feat_args="--features $FEAT"
+
+echo "check-anchors: building gen-anchors (release${FEAT:+, features: $FEAT})…"
+cargo build --release $feat_args --bin gen-anchors >/dev/null 2>&1
 
 NEW="$(mktemp)"
 trap 'rm -f "$NEW"' EXIT
