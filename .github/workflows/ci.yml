@@ -80,3 +80,42 @@ jobs:
         run: cargo fuzz run gguf_parse  -- -max_total_time=60 -max_len=262144 -rss_limit_mb=2048
       - name: Fuzz gguf_config (smoke)
         run: cargo fuzz run gguf_config -- -max_total_time=60 -max_len=262144 -rss_limit_mb=2048
+
+  anchors:
+    name: anchor guard (regime-manifest vs engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      # regime-manifest.json is the published determinism anchor but nothing re-derived
+      # it when the engine changed, so a digest-affecting change could drift it silently
+      # (and once did). This job regenerates the anchors and asserts they still match.
+      # It needs a real checkpoint; TinyLlama (668 MB) is the canonical conformance model
+      # and small enough for hosted CI, cached so it downloads once. Mistral/Qwen are not
+      # fetched here — the guard SKIPs any model whose checkpoint is absent, so this is a
+      # genuine check on TinyLlama and a no-op (not a false pass) on the rest. A runner
+      # that also has them extends the same guard (tools/check-anchors.sh).
+      - name: Cache TinyLlama GGUF
+        id: gguf
+        uses: actions/cache@v4
+        with:
+          path: ci-models/tinyllama-1.1b-Q4_K_M.gguf
+          key: gguf-tinyllama-1.1b-chat-v1.0-q4km
+
+      - name: Fetch TinyLlama (on cache miss)
+        if: steps.gguf.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ci-models
+          curl -fL --retry 3 -o ci-models/tinyllama-1.1b-Q4_K_M.gguf \
+            https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+
+      - name: Guard regime-manifest.json against the engine
+        env:
+          VITNI_GGUF_TINYLLAMA: ${{ github.workspace }}/ci-models/tinyllama-1.1b-Q4_K_M.gguf
+        run: bash tools/check-anchors.sh
