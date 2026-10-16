@@ -3,7 +3,22 @@
 All notable changes to `vitni-tensor` are documented here.
 This project follows [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [0.2.2] — 2026-10-16
+
+**Fix (`std-parallel`): Q4_K ran a different, lossy kernel than the default build.**
+The `std-parallel` forward computed Q4_K linears via the int8-activation *integer*
+kernel instead of the f32 *fused* kernel the default build uses; the two are not
+bit-identical, so an enabled-`std-parallel` build produced different certified digests
+for Mistral-7B / Qwen-0.5B (TinyLlama agreed by luck and masked it). It now
+parallelizes the SAME fused kernel (`linear_q4_k_fused_parallel`), bit-identical to
+serial at every thread count (asserted by `parallel_q4k_matches_serial_at_every_thread_count`).
+The int8 integer path stays in the tree as the separate regime-4 candidate, no longer
+wired into the default parallel forward.
+
+- **Anchor guard (`tools/check-anchors.sh` + CI).** Re-derives the published
+  `regime-manifest.json` anchors from the engine and fails on drift, run under both the
+  default and `--features std-parallel` builds — so a build that computes different bits
+  can no longer ship silently.
 
 **REGIME BUMP `vitni-regime-1` → `vitni-regime-2`: one reduction contract for the
 whole forward pass.** `rms_norm`, `softmax`, and attention (Q·K, A·V) computed
