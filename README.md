@@ -5,13 +5,32 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Deterministic, `no_std` tensor engine for verifiable LLM inference.** The same
-inputs produce the **same output bits on different CPUs** — across vendors and
-instruction sets — by fixing reduction order in floating point and doing k-quant
+inputs produce the **same output bits on different CPUs**, across vendors and
+instruction sets, by fixing reduction order in floating point and doing k-quant
 matmuls in exact integers. It runs stock GGUF models and emits a `vitnify-receipt v2`
-model-computation digest — binding the numerical regime (`vitni-regime-2`) — for every run.
+model-computation digest that binds the numerical regime (`vitni-regime-2`) for every run.
 
-vitni-tensor is the deterministic engine under [vitnify](https://vitnify.com) —
-execution receipts for AI agents.
+vitni-tensor is the deterministic engine under [vitnify](https://vitnify.com),
+the execution-receipt layer for AI agents.
+
+![vitni-tensor reproducing its published anchor on a fresh cloud box](docs/reproduce.gif)
+
+## Reproduce the anchor yourself
+
+The determinism claim is checkable, not asserted. Clone the repo, point it at the same
+TinyLlama checkpoint CI uses, and re-derive the published anchor on whatever CPU you have:
+
+```sh
+git clone https://github.com/vitnify/vitni-tensor
+cd vitni-tensor
+mkdir -p ci-models
+curl -fL -o ci-models/tinyllama-1.1b-Q4_K_M.gguf \
+  https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+VITNI_GGUF_TINYLLAMA=ci-models/tinyllama-1.1b-Q4_K_M.gguf ./tools/check-anchors.sh
+```
+
+You get the same digest on your machine as the one published in `regime-manifest.json`,
+or determinism is broken and you will know immediately.
 
 ## Why
 
@@ -53,6 +72,14 @@ Across TinyLlama-1.1B, Mistral-7B, and Qwen2.5 on Apple, Arm/AWS Graviton, Intel
 AMD (two ISAs, two compiler builds), the same run produces a byte-identical certificate
 digest. Details in the paper, *Reconstructable Execution Certificates for Tool-Using AI
 Agents*.
+
+## Cite
+
+If you use vitni-tensor or reference the method, cite the paper:
+
+> J. N. Pijeau, "Reconstructable Execution Certificates for Tool-Using AI Agents," preprint, 2026. https://vitnify.com/Vitnify-Paper.pdf
+
+A machine-readable [`CITATION.cff`](CITATION.cff) is in the repo, so GitHub shows a "Cite this repository" button with ready-made BibTeX.
 
 ## License
 

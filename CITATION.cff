@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software or reference the method, please cite the paper below."
+title: "vitni-tensor: deterministic, cross-vendor bit-identical LLM inference"
+authors:
+  - family-names: Pijeau
+    given-names: Jean N.
+repository-code: "https://github.com/vitnify/vitni-tensor"
+url: "https://vitnify.com"
+license: Apache-2.0
+preferred-citation:
+  type: article
+  title: "Reconstructable Execution Certificates for Tool-Using AI Agents"
+  authors:
+    - family-names: Pijeau
+      given-names: Jean N.
+  year: 2026
+  month: 10
+  url: "https://vitnify.com/Vitnify-Paper.pdf"
+  notes: "Preprint"
