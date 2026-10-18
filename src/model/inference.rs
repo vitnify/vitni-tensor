@@ -285,6 +285,29 @@ pub fn run_quantized_with_sink<S: CertSink>(
     })
 }
 
+/// Regime-3 CPU reference: the same forward, but the k-quant linears use the
+/// integer-activation + running-sum path. UNPUBLISHED regime — this exists so a
+/// regime-3 GPU backend can be validated against a CPU cert computed the same way.
+/// It does not change `run_quantized` (regime-2, shipped) or the bound REGIME string;
+/// shipping regime-3 (the REGIME-string + anchor change) is a separate re-anchor step.
+pub fn run_quantized_regime3(
+    cfg: &Config,
+    weights: &QuantizedWeights<'_>,
+    weights_blob_hash: &[u8; 32],
+    req: &Request,
+) -> Result<Outcome> {
+    let mut state = RunState::new(cfg);
+    state.set_regime(3);
+    run_quantized_with_forward(cfg, weights_blob_hash, req, &mut crate::cert::NullSink, 0, move |cur, pos| {
+        forward_quantized::step(cfg, weights, &mut state, cur, pos)
+    })
+    .map(|(o, _)| o)
+    .map_err(|e| match e {
+        RunError::Inference(e) => e,
+        RunError::Sink(_) => unreachable!("NullSink is infallible"),
+    })
+}
+
 /// The cert-issuing generation loop, parameterized on the per-step forward.
 ///
 /// The CPU path (`run_quantized_with_sink`) passes `forward_quantized::step`; a
@@ -359,4 +382,58 @@ where
         .map_err(RunError::Sink)?;
 
     Ok((Outcome { generated_tokens: generated, cert }, cert_id))
+}
+
+#[cfg(test)]
+mod regime3_tests {
+    use super::{run_quantized, run_quantized_regime3, Request};
+    use crate::model::config::Config;
+    use crate::model::gguf::GgufFile;
+    use crate::model::quant_weights::QuantizedWeights;
+
+    /// End-to-end forward integration: the regime-3 forward RUNS, is deterministic, and
+    /// produces a DIFFERENT certificate than regime-2 (because the k-quant linears use the
+    /// integer + running-sum path). Run with a Q4_K model: VITNI_GGUF=/path cargo test
+    /// --release -- --ignored --nocapture regime3_forward_runs_and_differs
+    #[test]
+    #[ignore = "needs a Q4_K model; set VITNI_GGUF"]
+    fn regime3_forward_runs_and_differs() {
+        let path = std::env::var("VITNI_GGUF").expect("set VITNI_GGUF");
+        let blob = std::fs::read(&path).expect("read gguf");
+        let hash = *blake3::hash(&blob).as_bytes();
+        let gguf = GgufFile::parse(&blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let w = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        let prompt: std::vec::Vec<u32> = std::vec![1, 9038, 2501, 263, 931, 29892];
+        let req = Request { model_id: "regime3-check", prompt_tokens: &prompt, n_new_tokens: 8 };
+
+        // End-to-end cert: regime-3 runs and is deterministic. (The cert binds generated
+        // TOKENS, so it may or may not differ from regime-2 — integer activation is lossy
+        // but close, and on a small model the argmax need not flip. So engagement is checked
+        // at the LOGITS level below, not via the cert.)
+        let r3a = run_quantized_regime3(&cfg, &w, &hash, &req).unwrap();
+        let r3b = run_quantized_regime3(&cfg, &w, &hash, &req).unwrap();
+        assert_eq!(r3a.cert.digest, r3b.cert.digest, "regime-3 forward is not deterministic (cert)");
+        assert_eq!(r3a.generated_tokens, r3b.generated_tokens, "regime-3 tokens not deterministic");
+
+        // Engagement + determinism at the logits level: a regime-3 step must DIFFER from a
+        // regime-2 step (the integer linears are actually used) and be reproducible.
+        use crate::model::forward::RunState;
+        use crate::model::forward_quantized;
+        let bits = |t: &crate::Tensor| -> std::vec::Vec<u32> {
+            let b = t.storage_cpu_bytes().unwrap();
+            (0..b.len() / 4).map(|i| u32::from_le_bytes([b[i * 4], b[i * 4 + 1], b[i * 4 + 2], b[i * 4 + 3]])).collect()
+        };
+        let mut s2 = RunState::new(&cfg);
+        let mut s3 = RunState::new(&cfg); s3.set_regime(3);
+        let mut s3b = RunState::new(&cfg); s3b.set_regime(3);
+        let l2 = bits(&forward_quantized::step(&cfg, &w, &mut s2, prompt[0], 0).unwrap());
+        let l3 = bits(&forward_quantized::step(&cfg, &w, &mut s3, prompt[0], 0).unwrap());
+        let l3b = bits(&forward_quantized::step(&cfg, &w, &mut s3b, prompt[0], 0).unwrap());
+        let diffs = (0..l2.len()).filter(|&i| l2[i] != l3[i]).count();
+        std::eprintln!("regime-3 logits: {}/{} differ from regime-2; deterministic={}", diffs, l2.len(), l3 == l3b);
+        assert_eq!(l3, l3b, "regime-3 step not deterministic (logits)");
+        assert!(diffs > 0, "regime-3 logits == regime-2 — the integer linears are NOT engaged");
+        std::eprintln!("PASS: regime-3 forward runs, deterministic, and the integer linears are engaged");
+    }
 }

@@ -21,6 +21,11 @@ pub struct RunState {
     key_cache: Vec<f32>,
     /// Value cache — `[n_layers, seq_len, kv_dim]`, flat.
     value_cache: Vec<f32>,
+    /// Numeric regime for the quantized linears: 2 = shipped (Q4_K float-fused,
+    /// Q6_K integer+fixed_tree); 3 = integer-activation + running-sum combine
+    /// (unpublished; selected only via the regime-3 entry points). Default 2 so
+    /// every existing caller is unchanged.
+    regime: u8,
 }
 
 impl RunState {
@@ -30,7 +35,18 @@ impl RunState {
         Self {
             key_cache: alloc::vec![0.0f32; kv_total],
             value_cache: alloc::vec![0.0f32; kv_total],
+            regime: 2,
         }
+    }
+
+    /// Select the numeric regime (2 = shipped, 3 = integer/running-sum). See the
+    /// `regime` field. Only the regime-3 entry points set this to 3.
+    pub fn set_regime(&mut self, regime: u8) {
+        self.regime = regime;
+    }
+    /// The active numeric regime.
+    pub fn regime(&self) -> u8 {
+        self.regime
     }
 
     /// Mutable access to the key cache. Used by alternate architecture

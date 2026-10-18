@@ -344,6 +344,7 @@ pub fn step_with_recorders(
     let head_size = cfg.head_size();
     let hidden_dim = cfg.hidden_dim;
     let n_heads = cfg.n_heads;
+    let regime = state.regime(); // 2 = shipped; 3 = integer-activation + running-sum linears
 
     // ---- 0. Token embedding ----
     // Extract one row of the embedding table. For Q4_0 we dequant
@@ -387,17 +388,17 @@ pub fn step_with_recorders(
         }
 
         // ---- 1b. Q/K/V projections (+ optional QKV bias, Qwen2) ----
-        let mut q_vec = linear_dispatch(&xb_vec, &blk.wq, dim, attn_q_out_dim(cfg))?;
+        let mut q_vec = linear_dispatch(&xb_vec, &blk.wq, dim, attn_q_out_dim(cfg), regime)?;
         if let Some(ref mut rec) = recorder {
             rec.record("linear_q4_0", layer_u32, &format!("wq/{}", layer), &xb_vec, &q_vec);
         }
         add_bias(&mut q_vec, blk.bq);
-        let mut k_vec = linear_dispatch(&xb_vec, &blk.wk, dim, kv_dim)?;
+        let mut k_vec = linear_dispatch(&xb_vec, &blk.wk, dim, kv_dim, regime)?;
         if let Some(ref mut rec) = recorder {
             rec.record("linear_q4_0", layer_u32, &format!("wk/{}", layer), &xb_vec, &k_vec);
         }
         add_bias(&mut k_vec, blk.bk);
-        let mut v_vec = linear_dispatch(&xb_vec, &blk.wv, dim, kv_dim)?;
+        let mut v_vec = linear_dispatch(&xb_vec, &blk.wv, dim, kv_dim, regime)?;
         if let Some(ref mut rec) = recorder {
             rec.record("linear_q4_0", layer_u32, &format!("wv/{}", layer), &xb_vec, &v_vec);
         }
@@ -521,7 +522,7 @@ pub fn step_with_recorders(
         }
 
         // ---- 1f. Output projection ----
-        let xb2_vec = linear_dispatch(&xb_out, &blk.wo, dim, dim)?;
+        let xb2_vec = linear_dispatch(&xb_out, &blk.wo, dim, dim, regime)?;
         if let Some(ref mut rec) = recorder {
             rec.record("linear_q4_0", layer_u32, &format!("wo/{}", layer), &xb_out, &xb2_vec);
         }
@@ -557,11 +558,11 @@ pub fn step_with_recorders(
         }
 
         // ---- 2b. Gate and Up projections ----
-        let gate_vec = linear_dispatch(&xb_ffn_vec, &blk.w1, dim, hidden_dim)?;
+        let gate_vec = linear_dispatch(&xb_ffn_vec, &blk.w1, dim, hidden_dim, regime)?;
         if let Some(ref mut rec) = recorder {
             rec.record("linear_q4_0", layer_u32, &format!("w1/{}", layer), &xb_ffn_vec, &gate_vec);
         }
-        let up_vec = linear_dispatch(&xb_ffn_vec, &blk.w3, dim, hidden_dim)?;
+        let up_vec = linear_dispatch(&xb_ffn_vec, &blk.w3, dim, hidden_dim, regime)?;
         if let Some(ref mut rec) = recorder {
             rec.record("linear_q4_0", layer_u32, &format!("w3/{}", layer), &xb_ffn_vec, &up_vec);
         }
@@ -575,7 +576,7 @@ pub fn step_with_recorders(
         }
 
         // ---- 2d. Down projection ----
-        let xb_down_vec = linear_dispatch(&ffn_inner, &blk.w2, hidden_dim, dim)?;
+        let xb_down_vec = linear_dispatch(&ffn_inner, &blk.w2, hidden_dim, dim, regime)?;
         if let Some(ref mut rec) = recorder {
             rec.record("linear_q4_0", layer_u32, &format!("w2/{}", layer), &ffn_inner, &xb_down_vec);
         }
@@ -631,12 +632,12 @@ pub fn step_with_recorders(
     // wcls: present → dedicated lm_head; absent → share token_embd.
     let (logits_vec, lm_head_key) = if let Some(wcls) = &weights.wcls {
         (
-            linear_dispatch(&x_final_vec, wcls, dim, cfg.vocab_size)?,
+            linear_dispatch(&x_final_vec, wcls, dim, cfg.vocab_size, regime)?,
             "wcls",
         )
     } else {
         (
-            linear_dispatch(&x_final_vec, &weights.token_embedding_table, dim, cfg.vocab_size)?,
+            linear_dispatch(&x_final_vec, &weights.token_embedding_table, dim, cfg.vocab_size, regime)?,
             "token_embd",
         )
     };
@@ -679,8 +680,19 @@ fn linear_dispatch(
     w: &QuantTensor<'_>,
     in_feat: usize,
     out_feat: usize,
+    regime: u8,
 ) -> Result<Vec<f32>> {
     let mut y = alloc::vec![0.0f32; out_feat];
+    // regime-3 overrides only the k-quant linears (integer activation + running-sum
+    // combine); every other dtype/op is identical to regime-2. Unpublished regime —
+    // reached only via the regime-3 entry points.
+    if regime == 3 {
+        match w.dtype {
+            GgufTensorType::Q4_K => { ops::quant::linear_q4_k_integer_rs(x, w.bytes, &mut y, 1, in_feat, out_feat)?; return Ok(y); }
+            GgufTensorType::Q6_K => { ops::quant::linear_q6_k_integer_rs(x, w.bytes, &mut y, 1, in_feat, out_feat)?; return Ok(y); }
+            _ => {}
+        }
+    }
     match w.dtype {
         GgufTensorType::Q4_0 => {
             ops::quant::linear_q4_0_cpu(x, w.bytes, &mut y, 1, in_feat, out_feat)?;
