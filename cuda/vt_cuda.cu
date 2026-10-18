@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cuda_runtime.h>
 #include <mma.h>
+#include <cuda_pipeline.h>
 using namespace nvcuda;
 
 // ============================ device helpers ============================
@@ -771,6 +772,103 @@ __global__ void __launch_bounds__(QKW * 32) k_q4k_rs_gemm_wmma(const unsigned ch
     }
 }
 
+// Q4_K GEMM on int8 tensor cores via mma.sync.m16n8k32 (one instruction per 32-elem sub-block) with
+// cp.async DOUBLE-BUFFERED staging — the sm_80+ scale-up path (ports standalone v12). One mma.sync
+// does a full Q4_K sub-block; cp.async hides the global-read latency behind compute. Bit-identical to
+// k_q4k_rs_gemm_wmma (same integer dot, same running-sum float epilogue). out[N][M] token-major, acc
+// residual. Requires M % QKM == 0 (host enforces; falls back to WMMA otherwise); ragged N handled.
+// The whole body is compiled only for sm_80+; on an sm_75 build the kernel is an empty stub never
+// launched (host dispatches on device compute capability). ~3.4× the dp4a kernel on an A10G.
+__global__ void __launch_bounds__(QKW * 32) k_q4k_rs_gemm_mma(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+                                                              float* out, unsigned M, unsigned N, unsigned ns, int acc) {
+#if __CUDA_ARCH__ >= 800
+    const unsigned VM = QKM / 16u, VN = QKN / 8u, NTILES = VM * VN, TPW = NTILES / QKW;
+    unsigned wib = threadIdx.x >> 5, lane = threadIdx.x & 31u, tid = threadIdx.x, nthr = QKW * 32u;
+    unsigned gid = lane >> 2, tig = lane & 3u;
+    unsigned mbase = blockIdx.x * QKM, nbase = blockIdx.y * QKN;
+    extern __shared__ unsigned char smem[];
+    unsigned char* rw = smem;                                   // [2][QKM][144] raw packed weights
+    signed char* xs = (signed char*)(rw + (size_t)2 * QKM * 144);   // [2][QKN][256] int8 activations
+    signed char* wsh = xs + (size_t)2 * QKN * 256;              // [QKM][256] unpacked nibbles
+    unsigned char* scsh = (unsigned char*)(wsh + (size_t)QKM * 256); // [QKM][8]
+    unsigned char* msh = scsh + (size_t)QKM * 8;               // [QKM][8]
+    float* drow = (float*)(msh + (size_t)QKM * 8);             // [QKM]
+    float* dmrow = drow + QKM;                                 // [QKM]
+    float* dxsh = dmrow + QKM;                                 // [QKN]
+    int* bsh = (int*)(dxsh + QKN);                             // [QKN][8]
+
+    auto load = [&](unsigned buf, unsigned s) {
+        unsigned char* rwb = rw + (size_t)buf * QKM * 144;      // M % QKM == 0 (host-enforced): no OOB rows
+        for (unsigned i = tid; i < QKM * 9u; i += nthr) { unsigned r = i / 9u, w = (i % 9u) * 16u; __pipeline_memcpy_async(rwb + (size_t)r * 144 + w, W + (size_t)(mbase + r) * ns * 144u + s * 144u + w, 16); }
+        signed char* xsb = xs + (size_t)buf * QKN * 256;
+        for (unsigned i = tid; i < QKN * 16u; i += nthr) { unsigned c = i >> 4, w = (i & 15u) * 16u, tc = nbase + c; if (tc < N) __pipeline_memcpy_async(xsb + (size_t)c * 256 + w, xq + ((size_t)tc * ns + s) * 256u + w, 16); }
+        __pipeline_commit();
+    };
+
+    float oa[8][4]; for (unsigned i = 0; i < TPW; i++) for (int e = 0; e < 4; e++) oa[i][e] = 0.0f;
+    load(0, 0);
+    for (unsigned s = 0u; s < ns; s++) {
+        unsigned cur = s & 1u;
+        if (s + 1u < ns) load((s + 1u) & 1u, s + 1u);
+        __pipeline_wait_prior(s + 1u < ns ? 1 : 0);
+        __syncthreads();
+        unsigned char* rwb = rw + (size_t)cur * QKM * 144;
+        for (unsigned i = tid; i < QKM * 256u; i += nthr) {
+            unsigned r = i >> 8, e = i & 255u; const unsigned char* qs = rwb + (size_t)r * 144 + 16;
+            unsigned half = e >> 6, within = e & 63u, lo = within < 32u, l = within & 31u, q = qs[half * 32u + l];
+            wsh[(size_t)r * 256 + e] = (signed char)(lo ? (q & 0x0Fu) : (q >> 4));
+        }
+        for (unsigned i = tid; i < QKM * 8u; i += nthr) { unsigned r = i >> 3, sub = i & 7u; unsigned sv, mv; get_scale_min_k4(sub, rwb + (size_t)r * 144 + 4, &sv, &mv); scsh[(size_t)r * 8 + sub] = (unsigned char)sv; msh[(size_t)r * 8 + sub] = (unsigned char)mv; }
+        for (unsigned i = tid; i < QKM; i += nthr) { const unsigned char* blk = rwb + (size_t)i * 144; drow[i] = f16_to_f32(blk[0] | (blk[1] << 8)); dmrow[i] = f16_to_f32(blk[2] | (blk[3] << 8)); }
+        for (unsigned i = tid; i < QKN; i += nthr) { unsigned tc = nbase + i; if (tc < N) { dxsh[i] = dx[(size_t)tc * ns + s]; for (int g = 0; g < 8; g++) bsh[(size_t)i * 8 + g] = bsums[((size_t)tc * ns + s) * 8u + g]; } else { dxsh[i] = 0.0f; for (int g = 0; g < 8; g++) bsh[(size_t)i * 8 + g] = 0; } }
+        __syncthreads();
+        int accq[8][4], accm[8][4]; for (unsigned i = 0; i < TPW; i++) for (int e = 0; e < 4; e++) { accq[i][e] = 0; accm[i][e] = 0; }
+        signed char* xsb = xs + (size_t)cur * QKN * 256;
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned base = (sub >> 1) * 64u + (sub & 1u) * 32u;
+            for (unsigned i = 0; i < TPW; i++) {
+                unsigned t = wib * TPW + i, vm = t / VN, vn = t % VN, rb = vm * 16u, cb = vn * 8u;
+                int a0 = *(const int*)&wsh[(size_t)(rb + gid) * 256 + base + tig * 4u];
+                int a1 = *(const int*)&wsh[(size_t)(rb + gid + 8u) * 256 + base + tig * 4u];
+                int a2 = *(const int*)&wsh[(size_t)(rb + gid) * 256 + base + 16u + tig * 4u];
+                int a3 = *(const int*)&wsh[(size_t)(rb + gid + 8u) * 256 + base + 16u + tig * 4u];
+                int b0 = *(const int*)&xsb[(size_t)(cb + gid) * 256 + base + tig * 4u];
+                int b1 = *(const int*)&xsb[(size_t)(cb + gid) * 256 + base + 16u + tig * 4u];
+                int d0, d1, d2, d3;
+                asm("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%10,%11,%12,%13};"
+                    : "=r"(d0), "=r"(d1), "=r"(d2), "=r"(d3)
+                    : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1), "r"(0), "r"(0), "r"(0), "r"(0));
+                int scr0 = scsh[(size_t)(rb + gid) * 8 + sub], scr2 = scsh[(size_t)(rb + gid + 8u) * 8 + sub];
+                int mr0 = msh[(size_t)(rb + gid) * 8 + sub], mr2 = msh[(size_t)(rb + gid + 8u) * 8 + sub];
+                int bc0 = bsh[(size_t)(cb + tig * 2u) * 8 + sub], bc1 = bsh[(size_t)(cb + tig * 2u + 1u) * 8 + sub];
+                accq[i][0] += scr0 * d0; accq[i][1] += scr0 * d1; accq[i][2] += scr2 * d2; accq[i][3] += scr2 * d3;
+                accm[i][0] += mr0 * bc0; accm[i][1] += mr0 * bc1; accm[i][2] += mr2 * bc0; accm[i][3] += mr2 * bc1;
+            }
+        }
+        for (unsigned i = 0; i < TPW; i++) {
+            unsigned t = wib * TPW + i, vm = t / VN, vn = t % VN, rb = vm * 16u, cb = vn * 8u;
+            float dr0 = drow[rb + gid], dm0 = dmrow[rb + gid], dr2 = drow[rb + gid + 8u], dm2 = dmrow[rb + gid + 8u];
+            float dxc0 = dxsh[cb + tig * 2u], dxc1 = dxsh[cb + tig * 2u + 1u];
+            oa[i][0] += dr0 * dxc0 * (float)accq[i][0] - dm0 * dxc0 * (float)accm[i][0];
+            oa[i][1] += dr0 * dxc1 * (float)accq[i][1] - dm0 * dxc1 * (float)accm[i][1];
+            oa[i][2] += dr2 * dxc0 * (float)accq[i][2] - dm2 * dxc0 * (float)accm[i][2];
+            oa[i][3] += dr2 * dxc1 * (float)accq[i][3] - dm2 * dxc1 * (float)accm[i][3];
+        }
+        __syncthreads();
+    }
+    for (unsigned i = 0; i < TPW; i++) {
+        unsigned t = wib * TPW + i, vm = t / VN, vn = t % VN, rb = mbase + vm * 16u, cb = nbase + vn * 8u;
+        unsigned r0 = rb + gid, r2 = rb + gid + 8u, c0 = cb + tig * 2u, c1 = cb + tig * 2u + 1u;
+        if (r0 < M && c0 < N) { size_t o = (size_t)c0 * M + r0; out[o] = acc ? (out[o] + oa[i][0]) : oa[i][0]; }
+        if (r0 < M && c1 < N) { size_t o = (size_t)c1 * M + r0; out[o] = acc ? (out[o] + oa[i][1]) : oa[i][1]; }
+        if (r2 < M && c0 < N) { size_t o = (size_t)c0 * M + r2; out[o] = acc ? (out[o] + oa[i][2]) : oa[i][2]; }
+        if (r2 < M && c1 < N) { size_t o = (size_t)c1 * M + r2; out[o] = acc ? (out[o] + oa[i][3]) : oa[i][3]; }
+    }
+#else
+    (void)W; (void)dx; (void)xq; (void)bsums; (void)out; (void)M; (void)N; (void)ns; (void)acc;  // sm_75 stub (never launched)
+#endif
+}
+
 // ============================ host driver (C ABI) ============================
 
 typedef struct {
@@ -1113,8 +1211,16 @@ static inline void pg(const float* in, unsigned in_dim, const unsigned char* w, 
         if (getenv("VITNI_Q6K_SIMPLE")) k_q6k_rs_gemm_simple<<<((size_t)out_dim * P + 127) / 128, 128>>>(q8dx, q8qs, w, out, out_dim, P, ns, acc);
         else { dim3 grid((out_dim + PBM - 1) / PBM, (P + PBN - 1) / PBN); k_q6k_rs_gemm<<<grid, 256>>>(q8dx, q8qs, w, out, out_dim, P, ns, acc); }
     }
-    else if (getenv("VITNI_Q4K_DP4A")) { dim3 grid((out_dim + PBM - 1) / PBM, (P + PBN - 1) / PBN); k_q4k_rs_gemm<<<grid, 256>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
-    else { dim3 grid((out_dim + QKM - 1) / QKM, (P + QKN - 1) / QKN); k_q4k_rs_gemm_wmma<<<grid, QKW * 32>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
+    else {   // Q4_K. Kernel choice: dp4a (A/B) < wide-WMMA (portable, sm_75+) < mma.sync+cp.async (sm_80+ scale).
+        static int sm = -1; if (sm < 0) { cudaDeviceProp pp; cudaGetDeviceProperties(&pp, 0); sm = pp.major; }
+        if (getenv("VITNI_Q4K_DP4A")) { dim3 grid((out_dim + PBM - 1) / PBM, (P + PBN - 1) / PBN); k_q4k_rs_gemm<<<grid, 256>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
+        else if (sm >= 8 && out_dim % QKM == 0 && !getenv("VITNI_Q4K_WMMA")) {   // sm_80+ scale path
+            size_t shmma = (size_t)2 * QKM * 144 + (size_t)2 * QKN * 256 + (size_t)QKM * 256 + (size_t)QKM * 16 + (size_t)QKM * 8 + (size_t)QKN * 4 + (size_t)QKN * 32;
+            static int set = 0; if (!set) { cudaFuncSetAttribute(k_q4k_rs_gemm_mma, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)shmma); set = 1; }
+            dim3 grid((out_dim + QKM - 1) / QKM, (P + QKN - 1) / QKN); k_q4k_rs_gemm_mma<<<grid, QKW * 32, shmma>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc);
+        }
+        else { dim3 grid((out_dim + QKM - 1) / QKM, (P + QKN - 1) / QKN); k_q4k_rs_gemm_wmma<<<grid, QKW * 32>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
+    }
 }
 
 // Batched prefill forward (regime-3): processes P prompt tokens together — linears as batched

@@ -358,12 +358,27 @@ remaining kernel levers were built and validated bit-identical on an A10G (`kern
 | **v12 — mma.sync + cp.async 2×-buffer** | **13.9** | **17.0** | **2.8–3.4×** |
 
 All bit-identical to `ref_dot_rs` (0 diffs). v12 at ~17 int8-TOPS is ~12% of the A10G's int8 peak — the deterministic
-Q4_K GEMM is now **3.4× the dp4a kernel**. These are the **sm_80+ scale-up path**: both use Ampere+ features
-(`mma.sync m16n8k32`, `cp.async`), so the backend keeps the `sm_75`-compatible wide-WMMA kernel as its portable
-default and selects v11/v12 on sm_80+ hardware (A100/L40S/H100). Wiring that arch-conditional selection into
-`vt_cuda.cu` (plus ragged-`N` bounds on the cp.async loads) is the one remaining step to deploy them; the kernels
-themselves are proven. Not pursued: Ada/Hopper-specific FP8 / `wgmma` paths — those need an sm_89/90 box (the L40S
-stayed capacity-blocked) and a separate (non-bit-identical) numeric regime.
+Q4_K GEMM is now **3.4× the dp4a kernel**. Not pursued: Ada/Hopper-specific FP8 / `wgmma` paths — those need an
+sm_89/90 box (the L40S stayed capacity-blocked) and a separate (non-bit-identical) numeric regime.
+
+### Wired into the backend (arch-conditional, live and bit-identical)
+
+v12 is ported into `cuda/vt_cuda.cu` as `k_q4k_rs_gemm_mma` (token-major `out[N][M]`, `acc` residual, ragged-`N`
+handled, `M % 64 == 0` host-enforced) and the `pg()` dispatcher now picks the Q4_K kernel by device capability:
+**dp4a (A/B) < wide-WMMA (portable, sm_75+) < mma.sync+cp.async (sm_80+)**. The mma body is behind
+`#if __CUDA_ARCH__ >= 800`, so an sm_75 build compiles it to an empty stub (never launched — the T4 keeps WMMA);
+an sm_80+ build gets the real kernel and the host selects it on `p.major >= 8`. Compile-checked on both `sm_75`
+(stub) and `sm_86` (real). A/B env toggles: `VITNI_Q4K_WMMA`, `VITNI_Q4K_DP4A`.
+
+Validated on an A10G — certs unchanged with the mma path active:
+
+- **TinyLlama cert `[9d,20,db,01]` == CPU regime-3**; prefill 26.9× (was 22.9× on WMMA).
+- **Qwen2.5-0.5B cert `[80,b1,dd,16]` == CPU regime-3** (NeoX rope + QKV bias + GQA).
+- **Qwen2.5-7B prefill (64 tok): dp4a 12.4× → WMMA 20.6× → mma+cp.async 24.9×** — the sm_80+ path is auto-selected
+  and is 1.21× over WMMA / 2.02× over dp4a end-to-end.
+
+So the scale-up kernel is not just proven in the bench — it is the deterministic default on Ampere+ hardware, with
+the portable WMMA kernel still covering the T4. Remaining (Ada/Hopper only): FP8/`wgmma`, gated on an sm_89/90 box.
 
 ### The combine decision (regime-3 spec, GPU-critical)
 
