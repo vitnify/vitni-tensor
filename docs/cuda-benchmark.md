@@ -334,8 +334,36 @@ float kernels). Qwen2.5-0.5B prefill cert now `[80,b1,dd,16]` == CPU regime-3.
 The WMMA-vs-dp4a gap **grows with model size** (1.16× → 1.67×): once the other work is batched/tiled away, the Q4_K
 linears are a large share on the bigger model, so the tensor-core GEMM's 2× surfaces end-to-end — the large-model
 (product) path. All of this is bit-identical: every change preserves the regime-3 cert (`A/B` toggles
-`VITNI_Q4K_DP4A`, `VITNI_Q6K_SIMPLE`, `VITNI_PREFILL_UNBATCHED` kept for measurement). Still open as GEMM-depth levers
-for GEMM-bound cases: double-buffer / `cp.async`, `mma.sync m16n8k32`; and decode (N=1) still uses the per-token path.
+`VITNI_Q4K_DP4A`, `VITNI_Q6K_SIMPLE`, `VITNI_PREFILL_UNBATCHED` kept for measurement); decode (N=1) still uses the
+per-token path.
+
+### GEMM-depth levers (the scale-up path): mma.sync + cp.async
+
+For GEMM-dominated scale-up (large models, large serving batches) the Q4_K GEMM throughput still matters, so the two
+remaining kernel levers were built and validated bit-identical on an A10G (`kernels/q4k_imma_test.cu`):
+
+- **v11 — `mma.sync.m16n8k32.s8`.** WMMA int8 is `m16n16k16` (K=16), so a 32-element Q4_K sub-block needs two wmma
+  mma + bookkeeping. The PTX `mma.sync m16n8k32` does the whole sub-block in **one** instruction (half the issue
+  count). The Ampere s8 fragment layout is fixed/documented, so A/B load as contiguous 4-byte reads from shared and
+  the per-sub-block scale is applied to the 4 output registers in-register. Wide `MM×MN` staging as in v8.
+- **v12 — v11 + `cp.async` double-buffering.** v11 is still staging-bound (scales with N). cp.async async-copies the
+  next super-block's raw packed weights + int8 activations into a second shared buffer while the current one
+  computes, hiding the global-read latency; the cheap nibble unpack then runs shared→shared. Dynamic shared (~69 KB),
+  sm_80+.
+
+| kernel (A10G, M=4096) | N=256 | N=1024 | vs dp4a |
+|---|---|---|---|
+| v8 — WMMA wide | 10.2 | 10.8 | ~2.1× |
+| v11 — `mma.sync m16n8k32` | 11.3 | 13.0 | 2.3–2.6× |
+| **v12 — mma.sync + cp.async 2×-buffer** | **13.9** | **17.0** | **2.8–3.4×** |
+
+All bit-identical to `ref_dot_rs` (0 diffs). v12 at ~17 int8-TOPS is ~12% of the A10G's int8 peak — the deterministic
+Q4_K GEMM is now **3.4× the dp4a kernel**. These are the **sm_80+ scale-up path**: both use Ampere+ features
+(`mma.sync m16n8k32`, `cp.async`), so the backend keeps the `sm_75`-compatible wide-WMMA kernel as its portable
+default and selects v11/v12 on sm_80+ hardware (A100/L40S/H100). Wiring that arch-conditional selection into
+`vt_cuda.cu` (plus ragged-`N` bounds on the cp.async loads) is the one remaining step to deploy them; the kernels
+themselves are proven. Not pursued: Ada/Hopper-specific FP8 / `wgmma` paths — those need an sm_89/90 box (the L40S
+stayed capacity-blocked) and a separate (non-bit-identical) numeric regime.
 
 ### The combine decision (regime-3 spec, GPU-critical)
 
