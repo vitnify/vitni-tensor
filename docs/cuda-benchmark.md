@@ -224,10 +224,29 @@ Lessons, each measured:
   order → deterministic/bit-identical; the reference is `ref_dot_rs`). Validated bit-identical up to
   M=8192 N=2048 (0 / 16,777,216 diffs), reaching ~2.4 TOPS (~4× v1) and scaling with batch.
 
-v4 is the production architecture. It is ~7% of the T4 `__dp4a` ceiling — standard GEMM tuning (double-buffered
-shared loads, wider micro-tiles, bank-conflict-free staging) has clear headroom, and on Ada/Hopper an int8 IMMA
-tensor-core variant lifts the ceiling further — but the design (register-tiled integer, running-sum combine) is
-settled and bit-identical.
+### The combine decision (regime-3 spec, GPU-critical)
+
+Integrating against the ENGINE's regime-3 surfaced a key correction: `linear_q4_k_integer` combines
+super-blocks with **`fixed_tree`** (inherited from regime-2's style), not the running sum v4 used. Matching it
+exactly (v5 = v4's register-tiled pass-1 writing per-super-block parts to global + a `fixed_tree` combine pass)
+is **bit-identical** but **slow — 0.4 int8-TOPS** (M=4096 N=512), because `fixed_tree` needs all `nsuper` parts
+per output, which a register-tiled kernel can only hold in global (≈334 MB of parts traffic per GEMM → bandwidth-bound).
+
+| kernel | combine | int8-TOPS | matches engine regime-3? |
+|---|---|---|---|
+| v5 — dp4a two-pass | `fixed_tree` (engine's current) | 0.4 | ✅ yes — but GPU-hostile |
+| v4 — dp4a register | running sum | 2.2 | ❌ different digest |
+
+So the **combine choice costs ~5× on GPU**. Running sum is *also* a fixed, deterministic order — it is just
+register-cheap (one accumulator) where `fixed_tree` is not. Since **regime-3 is unpublished** (shipped `REGIME`
+is `vitni-regime-2`; regime-3 exists only as reserved code + `NUMERIC_REGIME_CHECK`), its combine is still a
+free design choice. **Recommendation: define regime-3's cross-super-block combine as a fixed-order running sum.**
+That makes the fast register-tiled kernel (v4) the on-spec one. It is a deliberate regime-definition change
+(touches `linear_q4_k_integer` + the pinned `NUMERIC_REGIME_CHECK`) coupled to the eventual re-anchor, so it
+needs sign-off — not a silent edit.
+
+With running-sum adopted, v4 is the production architecture (~4× v1, scaling with batch), ~7% of the T4 `__dp4a`
+ceiling with clear tuning headroom (double-buffering, wider tiles, an Ada/Hopper int8-IMMA variant).
 
 ## Program to "enterprise-ready" regime-3 (sequenced)
 

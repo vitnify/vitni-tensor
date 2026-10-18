@@ -151,6 +151,55 @@ __global__ void __launch_bounds__(256) q4k_dp4a_v4(
     }
 }
 
+// ---- v5: v4's register-tiled dp4a pass-1, but writes per-super-block parts to global so the
+// combine is fixed_tree (q4k_combine) — matching the ENGINE's regime-3 linear_q4_k_integer
+// (which uses fixed_tree across super-blocks), NOT v4's running sum. This is the on-spec
+// production kernel. ----
+__global__ void __launch_bounds__(256) q4k_dp4a_v5_p1(
+        const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+        float* parts, unsigned M, unsigned N, unsigned nsuper) {
+    unsigned tm = blockIdx.x * TBM, tn = blockIdx.y * TBN;
+    unsigned tid = threadIdx.x, trow = tid >> 4, tcol = tid & 15u;
+    __shared__ signed char wsh[TBM][256];
+    __shared__ signed char xsh[TBN][256];
+    __shared__ unsigned char scsh[TBM][8], msh[TBM][8];
+    __shared__ float dxsh[TBN];
+    __shared__ int bsh[TBN][8];
+    float drow[4], dmrow[4];
+    for (unsigned s = 0u; s < nsuper; s++) {
+        for (unsigned i = tid; i < TBM * 256u; i += 256u) {
+            unsigned r = i >> 8, e = i & 255u, wr = tm + r;
+            const unsigned char* qs = W + (size_t)wr * nsuper * 144u + s * 144u + 16u;
+            unsigned half = e >> 6, within = e & 63u, lo = within < 32u, l = within & 31u, q = qs[half * 32u + l];
+            wsh[r][e] = (signed char)(lo ? (q & 0x0Fu) : (q >> 4));
+        }
+        for (unsigned i = tid; i < TBN * 256u; i += 256u) { unsigned c = i >> 8, e = i & 255u, tc = tn + c; xsh[c][e] = xq[((size_t)tc * nsuper + s) * 256u + e]; }
+        for (unsigned i = tid; i < TBM * 8u; i += 256u) { unsigned r = i >> 3, sub = i & 7u, wr = tm + r; const unsigned char* scb = W + (size_t)wr * nsuper * 144u + s * 144u + 4u; unsigned sv, mv; gsm(sub, scb, &sv, &mv); scsh[r][sub] = (unsigned char)sv; msh[r][sub] = (unsigned char)mv; }
+        for (unsigned i = tid; i < TBN; i += 256u) { unsigned tc = tn + i; dxsh[i] = dx[(size_t)tc * nsuper + s]; for (int g = 0; g < 8; g++) bsh[i][g] = bsums[((size_t)tc * nsuper + s) * 8u + g]; }
+        for (int a = 0; a < 4; a++) { unsigned wr = tm + trow * 4u + a; const unsigned char* blk = W + (size_t)wr * nsuper * 144u + s * 144u; drow[a] = f16f(blk[0] | (blk[1] << 8)); dmrow[a] = f16f(blk[2] | (blk[3] << 8)); }
+        __syncthreads();
+        int acc[4][4], accm[4][4]; for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) { acc[a][b] = 0; accm[a][b] = 0; }
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned half = sub >> 1, hi = sub & 1u, base = half * 64u + hi * 32u;
+            for (int a = 0; a < 4; a++) {
+                unsigned r = trow * 4u + a; int sc = scsh[r][sub], mm = msh[r][sub];
+                for (int b = 0; b < 4; b++) {
+                    unsigned c = tcol * 4u + b; int sj = 0;
+                    const signed char* wp = &wsh[r][base]; const signed char* xp = &xsh[c][base];
+                    for (int k = 0; k < 32; k += 4) sj = __dp4a(*(const int*)(wp + k), *(const int*)(xp + k), sj);
+                    acc[a][b] += sc * sj; accm[a][b] += mm * bsh[c][sub];
+                }
+            }
+        }
+        for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) {
+            unsigned wr = tm + trow * 4u + a, tc = tn + tcol * 4u + b, c = tcol * 4u + b; float dxv = dxsh[c];
+            float a1 = drow[a] * dxv, a2 = dmrow[a] * dxv;
+            if (wr < M && tc < N) parts[((size_t)wr * N + tc) * nsuper + s] = a1 * (float)acc[a][b] - a2 * (float)accm[a][b];
+        }
+        __syncthreads();
+    }
+}
+
 // ---- WMMA kernel: one warp per 16x16 output tile ----
 __global__ void q4k_imma(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
                          float* out, unsigned M, unsigned N, unsigned nsuper) {
@@ -474,6 +523,23 @@ int main(int argc, char** argv) {
         cudaEventRecord(s0); for (int it = 0; it < iters; it++) q4k_dp4a_v4<<<grid4, blk4>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
         cudaEventRecord(e0); cudaEventSynchronize(e0); float ms4 = 0; cudaEventElapsedTime(&ms4, s0, e0); ms4 /= iters;
         printf("v4 dp4a-tiled  : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1)\n", ms4, 2.0 * M * N * K / (ms4 * 1e-3) / 1e12, ms / ms4);
+    }
+
+    // ---- v5: on-spec production kernel (register-tiled dp4a pass-1 + fixed_tree combine) ----
+    // Validated against the FIXED_TREE reference `ref` (== engine's linear_q4_k_integer).
+    if (M % TBM == 0 && N % TBN == 0) {
+        dim3 grid5(M / TBM, N / TBN); dim3 blk5(256);
+        q4k_dp4a_v5_p1<<<grid5, blk5>>>(dW, ddx, dqs, dbs, dparts, M, N, nsuper);
+        q4k_combine<<<((size_t)M * N + 127) / 128, 128>>>(dparts, dout, M, N, nsuper);
+        cudaError_t e5 = cudaDeviceSynchronize();
+        if (e5 != cudaSuccess) { printf("v5 launch error: %s\n", cudaGetErrorString(e5)); return 1; }
+        float* gpu5 = (float*)malloc((size_t)M * N * 4); cudaMemcpy(gpu5, dout, (size_t)M * N * 4, cudaMemcpyDeviceToHost);
+        size_t d5 = 0, f5 = (size_t)-1; for (size_t i = 0; i < (size_t)M * N; i++) { unsigned a, b; memcpy(&a, &ref[i], 4); memcpy(&b, &gpu5[i], 4); if (a != b) { if (f5 == (size_t)-1) f5 = i; d5++; } }
+        printf("v5 dp4a+fixedtree bit-identity (vs FIXED-TREE ref = engine regime-3): %zu/%d diffs%s", d5, M * N, d5 ? "" : "  -> BIT-IDENTICAL\n");
+        if (d5) printf("   first @ %zu ref=%g gpu=%g\n", f5, ref[f5], gpu5[f5]);
+        cudaEventRecord(s0); for (int it = 0; it < iters; it++) { q4k_dp4a_v5_p1<<<grid5, blk5>>>(dW, ddx, dqs, dbs, dparts, M, N, nsuper); q4k_combine<<<((size_t)M * N + 127) / 128, 128>>>(dparts, dout, M, N, nsuper); }
+        cudaEventRecord(e0); cudaEventSynchronize(e0); float ms5 = 0; cudaEventElapsedTime(&ms5, s0, e0); ms5 /= iters;
+        printf("v5 dp4a+fixedtree : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1)\n", ms5, 2.0 * M * N * K / (ms5 * 1e-3) / 1e12, ms / ms5);
     }
     return 0;
 }
