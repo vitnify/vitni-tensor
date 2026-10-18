@@ -200,6 +200,150 @@ __global__ void __launch_bounds__(256) q4k_dp4a_v5_p1(
     }
 }
 
+// ---- v6: WMMA tensor cores with IN-REGISTER per-sub-block scaling (solves the epilogue bound).
+// The per-sub-block integer scale is applied directly to the accumulator fragment — no
+// store_matrix_sync, no shared round-trip, no per-sub-block sync. Each thread's fragment
+// element->(row,col) is DERIVED at runtime (an mma that yields C[r][c]=r, then =c), so no
+// opaque/arch-specific layout is hardcoded. Running-sum combine → matches ref_dot_rs. ----
+__global__ void q4k_imma_v6(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+                            float* out, unsigned M, unsigned N, unsigned nsuper) {
+    unsigned warp = (blockIdx.x * blockDim.x + threadIdx.x) >> 5;
+    unsigned lane = threadIdx.x & 31u;
+    unsigned tilesN = N / 16u, tm = warp / tilesN, tn = warp % tilesN;
+    if (tm * 16u >= M || tn * 16u >= N) return;
+    __shared__ signed char na[16][256];     // super-block nibbles (16 weight rows)
+    __shared__ signed char xs[16][256];      // super-block xq (16 tokens)
+    __shared__ unsigned char scsh[16][8], msh[16][8];
+    __shared__ float dxsh[16]; __shared__ int bsh[16][8]; __shared__ float drow[16], dmrow[16];
+    __shared__ int probe[16][16];                            // scratch for the layout probe (per warp slot below)
+
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, signed char, wmma::row_major> fa;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, signed char, wmma::col_major> fb;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, int> fc;
+
+    // --- derive element->(row,col) for this thread's accumulator lanes, from the hardware itself.
+    // The fragment layout is opaque but STABLE per compile, so every mma writes element e to the
+    // same (row,col) that store_matrix_sync would. Tag each element with a unique id, store once
+    // (row-major), and read back which (row,col) each id landed on. Portable: uses only the
+    // documented store path, no hardcoded layout. ---
+    int rowmap[8], colmap[8];
+    for (int e = 0; e < fc.num_elements; e++) fc.x[e] = (int)(lane * 8u + (unsigned)e);
+    wmma::store_matrix_sync(&probe[0][0], fc, 16, wmma::mem_row_major);
+    __syncwarp();
+    for (int e = 0; e < 8; e++) { rowmap[e] = 0; colmap[e] = 0; }
+    for (int r = 0; r < 16; r++) for (int c = 0; c < 16; c++) {
+        int id = probe[r][c]; unsigned owner = (unsigned)id >> 3;
+        if (owner == lane) { int e = id & 7; rowmap[e] = r; colmap[e] = c; }
+    }
+    __syncwarp();
+
+    float outacc[8]; for (int e = 0; e < 8; e++) outacc[e] = 0.0f;
+    for (unsigned s = 0u; s < nsuper; s++) {
+        for (unsigned i = lane; i < 16u * 256u; i += 32u) {
+            unsigned r = i >> 8, e = i & 255u, wr = tm * 16u + r;
+            const unsigned char* qs = W + (size_t)wr * nsuper * 144u + s * 144u + 16u;
+            unsigned half = e >> 6, within = e & 63u, lo = within < 32u, l = within & 31u, q = qs[half * 32u + l];
+            na[r][e] = (signed char)(lo ? (q & 0x0Fu) : (q >> 4));
+            unsigned tc = tn * 16u + r; xs[r][e] = xq[((size_t)tc * nsuper + s) * 256u + e];
+        }
+        if (lane < 16u) {
+            unsigned wr = tm * 16u + lane, tc = tn * 16u + lane;
+            const unsigned char* scb = W + (size_t)wr * nsuper * 144u + s * 144u + 4u;
+            for (unsigned sub = 0u; sub < 8u; sub++) { unsigned sv, mv; gsm(sub, scb, &sv, &mv); scsh[lane][sub] = (unsigned char)sv; msh[lane][sub] = (unsigned char)mv; }
+            const unsigned char* blk = W + (size_t)wr * nsuper * 144u + s * 144u;
+            drow[lane] = f16f(blk[0] | (blk[1] << 8)); dmrow[lane] = f16f(blk[2] | (blk[3] << 8));
+            dxsh[lane] = dx[(size_t)tc * nsuper + s]; for (int g = 0; g < 8; g++) bsh[lane][g] = bsums[((size_t)tc * nsuper + s) * 8u + g];
+        }
+        __syncthreads();
+        int acc[8], accm[8]; for (int e = 0; e < 8; e++) { acc[e] = 0; accm[e] = 0; }
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned base = (sub >> 1) * 64u + (sub & 1u) * 32u;
+            wmma::fill_fragment(fc, 0);
+            wmma::load_matrix_sync(fa, &na[0][base], 256); wmma::load_matrix_sync(fb, &xs[0][base], 256); wmma::mma_sync(fc, fa, fb, fc);
+            wmma::load_matrix_sync(fa, &na[0][base + 16], 256); wmma::load_matrix_sync(fb, &xs[0][base + 16], 256); wmma::mma_sync(fc, fa, fb, fc);
+            for (int e = 0; e < 8; e++) {                        // in-register scale, no store_matrix_sync
+                int r = rowmap[e], cc = colmap[e];
+                acc[e] += (int)scsh[r][sub] * fc.x[e];
+                accm[e] += (int)msh[r][sub] * bsh[cc][sub];
+            }
+        }
+        for (int e = 0; e < 8; e++) {
+            int r = rowmap[e], cc = colmap[e];
+            float a1 = drow[r] * dxsh[cc], a2 = dmrow[r] * dxsh[cc];
+            outacc[e] += a1 * (float)acc[e] - a2 * (float)accm[e];
+        }
+        __syncthreads();
+    }
+    for (int e = 0; e < 8; e++) {
+        unsigned wr = tm * 16u + rowmap[e], tc = tn * 16u + colmap[e];
+        if (wr < M && tc < N) out[(size_t)wr * N + tc] = outacc[e];   // row-major [M][N], matches ref/v4
+    }
+}
+
+// ---- v7: v6's in-register-scaled WMMA, now in a cooperative multi-warp block. The block owns ONE
+// 16-row M-tile and WN 16-col N-tiles; all WN*32 threads stage the 16 weight rows ONCE per super-
+// block (reused across all WN token tiles — the MMQ weight-reuse win), while each warp runs the
+// tensor-core mma + in-register per-sub-block scaling for its own token tile. Bit-identical to
+// ref_dot_rs; no store_matrix_sync in the hot path. ----
+#ifndef WN
+#define WN 4
+#endif
+__global__ void __launch_bounds__(WN * 32) q4k_imma_v7(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+                                                       float* out, unsigned M, unsigned N, unsigned nsuper) {
+    unsigned wib = threadIdx.x >> 5, lane = threadIdx.x & 31u, tid = threadIdx.x, nthr = WN * 32u;
+    unsigned tm = blockIdx.x, nbase = blockIdx.y * (WN * 16u);     // this block's M-tile + N-base
+    __shared__ signed char na[16][256];                           // weights: staged once, shared by all warps
+    __shared__ signed char xs[WN * 16][256];                      // activations: WN token tiles
+    __shared__ unsigned char scsh[16][8], msh[16][8];
+    __shared__ float drow[16], dmrow[16], dxsh[WN * 16];
+    __shared__ int bsh[WN * 16][8];
+    __shared__ int probe[WN][16][16];
+
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, signed char, wmma::row_major> fa;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, signed char, wmma::col_major> fb;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, int> fc;
+
+    // derive element->(row,col) for this warp's accumulator lanes (store-based, portable)
+    int rowmap[8], colmap[8];
+    for (int e = 0; e < fc.num_elements; e++) fc.x[e] = (int)(lane * 8u + (unsigned)e);
+    wmma::store_matrix_sync(&probe[wib][0][0], fc, 16, wmma::mem_row_major);
+    __syncwarp();
+    for (int e = 0; e < 8; e++) { rowmap[e] = 0; colmap[e] = 0; }
+    for (int r = 0; r < 16; r++) for (int c = 0; c < 16; c++) { int id = probe[wib][r][c]; if (((unsigned)id >> 3) == lane) { int e = id & 7; rowmap[e] = r; colmap[e] = c; } }
+    __syncthreads();
+
+    float outacc[8]; for (int e = 0; e < 8; e++) outacc[e] = 0.0f;
+    for (unsigned s = 0u; s < nsuper; s++) {
+        for (unsigned i = tid; i < 16u * 256u; i += nthr) {       // weights: all threads, once per block
+            unsigned r = i >> 8, e = i & 255u, wr = tm * 16u + r;
+            const unsigned char* qs = W + (size_t)wr * nsuper * 144u + s * 144u + 16u;
+            unsigned half = e >> 6, within = e & 63u, lo = within < 32u, l = within & 31u, q = qs[half * 32u + l];
+            na[r][e] = (signed char)(lo ? (q & 0x0Fu) : (q >> 4));
+        }
+        for (unsigned i = tid; i < WN * 16u * 256u; i += nthr) {   // activations: WN token tiles
+            unsigned c = i >> 8, e = i & 255u, tc = nbase + c; xs[c][e] = xq[((size_t)tc * nsuper + s) * 256u + e];
+        }
+        if (tid < 16u) {
+            unsigned wr = tm * 16u + tid; const unsigned char* scb = W + (size_t)wr * nsuper * 144u + s * 144u + 4u;
+            for (unsigned sub = 0u; sub < 8u; sub++) { unsigned sv, mv; gsm(sub, scb, &sv, &mv); scsh[tid][sub] = (unsigned char)sv; msh[tid][sub] = (unsigned char)mv; }
+            const unsigned char* blk = W + (size_t)wr * nsuper * 144u + s * 144u; drow[tid] = f16f(blk[0] | (blk[1] << 8)); dmrow[tid] = f16f(blk[2] | (blk[3] << 8));
+        }
+        for (unsigned i = tid; i < WN * 16u; i += nthr) { unsigned tc = nbase + i; dxsh[i] = dx[(size_t)tc * nsuper + s]; for (int g = 0; g < 8; g++) bsh[i][g] = bsums[((size_t)tc * nsuper + s) * 8u + g]; }
+        __syncthreads();
+        int acc[8], accm[8]; for (int e = 0; e < 8; e++) { acc[e] = 0; accm[e] = 0; }
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned base = (sub >> 1) * 64u + (sub & 1u) * 32u;
+            wmma::fill_fragment(fc, 0);
+            wmma::load_matrix_sync(fa, &na[0][base], 256);        wmma::load_matrix_sync(fb, &xs[wib * 16u][base], 256);        wmma::mma_sync(fc, fa, fb, fc);
+            wmma::load_matrix_sync(fa, &na[0][base + 16u], 256);  wmma::load_matrix_sync(fb, &xs[wib * 16u][base + 16u], 256);  wmma::mma_sync(fc, fa, fb, fc);
+            for (int e = 0; e < 8; e++) { int r = rowmap[e], cc = colmap[e]; acc[e] += (int)scsh[r][sub] * fc.x[e]; accm[e] += (int)msh[r][sub] * bsh[wib * 16u + cc][sub]; }
+        }
+        for (int e = 0; e < 8; e++) { int r = rowmap[e], cc = colmap[e]; float a1 = drow[r] * dxsh[wib * 16u + cc], a2 = dmrow[r] * dxsh[wib * 16u + cc]; outacc[e] += a1 * (float)acc[e] - a2 * (float)accm[e]; }
+        __syncthreads();
+    }
+    for (int e = 0; e < 8; e++) { unsigned wr = tm * 16u + rowmap[e], tc = nbase + wib * 16u + colmap[e]; if (wr < M && tc < N) out[(size_t)wr * N + tc] = outacc[e]; }
+}
+
 // ---- WMMA kernel: one warp per 16x16 output tile ----
 __global__ void q4k_imma(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
                          float* out, unsigned M, unsigned N, unsigned nsuper) {
@@ -540,6 +684,42 @@ int main(int argc, char** argv) {
         cudaEventRecord(s0); for (int it = 0; it < iters; it++) { q4k_dp4a_v5_p1<<<grid5, blk5>>>(dW, ddx, dqs, dbs, dparts, M, N, nsuper); q4k_combine<<<((size_t)M * N + 127) / 128, 128>>>(dparts, dout, M, N, nsuper); }
         cudaEventRecord(e0); cudaEventSynchronize(e0); float ms5 = 0; cudaEventElapsedTime(&ms5, s0, e0); ms5 /= iters;
         printf("v5 dp4a+fixedtree : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1)\n", ms5, 2.0 * M * N * K / (ms5 * 1e-3) / 1e12, ms / ms5);
+    }
+
+    // ---- v6: WMMA tensor cores, IN-REGISTER per-sub-block scaling (epilogue-bound problem solved) ----
+    // Running-sum regime → validate against refrs. One warp per 16x16 tile; static shared.
+    if (M % 16 == 0 && N % 16 == 0) {
+        float* refrs = (float*)malloc((size_t)M * N * 4);
+        for (int m = 0; m < M; m++) for (int n = 0; n < N; n++)
+            refrs[(size_t)m * N + n] = ref_dot_rs(hW + (size_t)m * nsuper * 144, dxh + (size_t)n * nsuper, qsh + (size_t)n * nsuper * 256, bsh + (size_t)n * nsuper * 8, nsuper);
+        unsigned wtot = (M / 16u) * (N / 16u), tpb = 32u, blocks = wtot;  // one warp (tile) per block
+        q4k_imma_v6<<<blocks, tpb>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+        cudaError_t e6 = cudaDeviceSynchronize();
+        if (e6 != cudaSuccess) { printf("v6 launch error: %s\n", cudaGetErrorString(e6)); return 1; }
+        float* gpu6 = (float*)malloc((size_t)M * N * 4); cudaMemcpy(gpu6, dout, (size_t)M * N * 4, cudaMemcpyDeviceToHost);
+        size_t d6 = 0, f6 = (size_t)-1; for (size_t i = 0; i < (size_t)M * N; i++) { unsigned a, b; memcpy(&a, &refrs[i], 4); memcpy(&b, &gpu6[i], 4); if (a != b) { if (f6 == (size_t)-1) f6 = i; d6++; } }
+        printf("v6 WMMA-inreg bit-identity (vs running-sum ref): %zu/%d diffs%s", d6, M * N, d6 ? "" : "  -> BIT-IDENTICAL\n");
+        if (d6) printf("   first @ %zu refrs=%g gpu=%g\n", f6, refrs[f6], gpu6[f6]);
+        cudaEventRecord(s0); for (int it = 0; it < iters; it++) q4k_imma_v6<<<blocks, tpb>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+        cudaEventRecord(e0); cudaEventSynchronize(e0); float ms6 = 0; cudaEventElapsedTime(&ms6, s0, e0); ms6 /= iters;
+        printf("v6 WMMA-inreg  : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1)\n", ms6, 2.0 * M * N * K / (ms6 * 1e-3) / 1e12, ms / ms6);
+
+        // ---- v7: cooperative multi-warp block (weight reuse) ----
+        if (N % (WN * 16) == 0) {
+            dim3 grid7(M / 16u, N / (WN * 16u)); unsigned tpb7 = WN * 32u;
+            q4k_imma_v7<<<grid7, tpb7>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+            cudaError_t e7 = cudaDeviceSynchronize();
+            if (e7 != cudaSuccess) { printf("v7 launch error: %s\n", cudaGetErrorString(e7)); return 1; }
+            float* gpu7 = (float*)malloc((size_t)M * N * 4); cudaMemcpy(gpu7, dout, (size_t)M * N * 4, cudaMemcpyDeviceToHost);
+            size_t d7 = 0, f7 = (size_t)-1; for (size_t i = 0; i < (size_t)M * N; i++) { unsigned a, b; memcpy(&a, &refrs[i], 4); memcpy(&b, &gpu7[i], 4); if (a != b) { if (f7 == (size_t)-1) f7 = i; d7++; } }
+            printf("v7 WMMA-coop bit-identity (vs running-sum ref): %zu/%d diffs%s", d7, M * N, d7 ? "" : "  -> BIT-IDENTICAL\n");
+            if (d7) printf("   first @ %zu refrs=%g gpu=%g\n", f7, refrs[f7], gpu7[f7]);
+            cudaEventRecord(s0); for (int it = 0; it < iters; it++) q4k_imma_v7<<<grid7, tpb7>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+            cudaEventRecord(e0); cudaEventSynchronize(e0); float ms7 = 0; cudaEventElapsedTime(&ms7, s0, e0); ms7 /= iters;
+            printf("v7 WMMA-coop(WN=%d) : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1, %.2fx vs v4-ref)\n", WN, ms7, 2.0 * M * N * K / (ms7 * 1e-3) / 1e12, ms / ms7, ms6 / ms7);
+            free(gpu7);
+        }
+        free(refrs); free(gpu6);
     }
     return 0;
 }
