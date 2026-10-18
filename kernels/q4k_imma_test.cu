@@ -148,6 +148,81 @@ __global__ void q4k_imma(const unsigned char* W, const float* dx, const signed c
     }
 }
 
+// ---- Two-pass: pass 1 stages each weight ONCE and reuses it across all N token-tiles
+// (weights read once total, not N/16x), writing per-super-block parts to global; pass 2
+// does the fixed-tree combine. Bit-identical to the single-pass kernel. NT = N/16 tiles. ----
+__global__ void q4k_imma_p1(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+                            float* parts, unsigned M, unsigned N, unsigned nsuper) {
+    unsigned tm = blockIdx.x; if (tm * 16u >= M) return;
+    unsigned lane = threadIdx.x & 31u;
+    unsigned NT = N / 16u;
+    extern __shared__ unsigned char smem[];
+    signed char* na = (signed char*)smem;                 // [16][32] weights (staged once/sub-block)
+    signed char* nbuf = na + 16 * 32;                     // [16][32] activations (per N-tile)
+    int* sjt = (int*)(nbuf + 16 * 32);                    // [16][16]
+    int* acc = sjt + 256;                                 // [NT][16][16]
+    int* accm = acc + (size_t)NT * 256;                   // [NT][16][16]
+    unsigned* scrow = (unsigned*)(accm + (size_t)NT * 256); // [16]
+    unsigned* mrow = scrow + 16;                          // [16]
+
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, signed char, wmma::row_major> fa;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, signed char, wmma::col_major> fb;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, int> fc;
+
+    for (unsigned s = 0u; s < nsuper; s++) {
+        for (unsigned i = lane; i < NT * 256u; i += 32u) { acc[i] = 0; accm[i] = 0; }
+        __syncwarp();
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned half = sub >> 1, hi = sub & 1u, qoff = half * 32u, base = half * 64u + hi * 32u;
+            for (unsigned i = lane; i < 16u * 32u; i += 32u) {       // stage weights ONCE per (s,sub)
+                unsigned r = i >> 5, l = i & 31u, wr = tm * 16u + r;
+                const unsigned char* qs = W + (size_t)wr * nsuper * 144u + s * 144u + 16u;
+                unsigned q = qs[qoff + l];
+                na[r * 32u + l] = (signed char)(hi ? (q >> 4) : (q & 0x0Fu));
+            }
+            if (lane < 16u) { const unsigned char* scb = W + (size_t)(tm * 16u + lane) * nsuper * 144u + s * 144u + 4u; gsm(sub, scb, &scrow[lane], &mrow[lane]); }
+            __syncwarp();
+            for (unsigned nt = 0u; nt < NT; nt++) {                  // reuse staged weights across all token-tiles
+                for (unsigned i = lane; i < 16u * 32u; i += 32u) {
+                    unsigned c = i >> 5, l = i & 31u, tc = nt * 16u + c;
+                    nbuf[c * 32u + l] = xq[((size_t)tc * nsuper + s) * 256u + base + l];
+                }
+                __syncwarp();
+                wmma::fill_fragment(fc, 0);
+                wmma::load_matrix_sync(fa, na, 32); wmma::load_matrix_sync(fb, nbuf, 32); wmma::mma_sync(fc, fa, fb, fc);
+                wmma::load_matrix_sync(fa, na + 16, 32); wmma::load_matrix_sync(fb, nbuf + 16, 32); wmma::mma_sync(fc, fa, fb, fc);
+                wmma::store_matrix_sync(sjt, fc, 16, wmma::mem_row_major);
+                __syncwarp();
+                int* a = acc + (size_t)nt * 256; int* am = accm + (size_t)nt * 256;
+                for (unsigned i = lane; i < 256u; i += 32u) {
+                    unsigned r = i >> 4, c = i & 15u, tc = nt * 16u + c;
+                    a[i] += (int)scrow[r] * sjt[i];
+                    am[i] += (int)mrow[r] * bsums[((size_t)tc * nsuper + s) * 8u + sub];
+                }
+                __syncwarp();
+            }
+        }
+        for (unsigned nt = 0u; nt < NT; nt++) {                      // write this super-block's parts
+            int* a = acc + (size_t)nt * 256; int* am = accm + (size_t)nt * 256;
+            for (unsigned i = lane; i < 256u; i += 32u) {
+                unsigned r = i >> 4, c = i & 15u, wr = tm * 16u + r, tc = nt * 16u + c;
+                const unsigned char* blk = W + (size_t)wr * nsuper * 144u + s * 144u;
+                float d = f16f(blk[0] | (blk[1] << 8)), dmin = f16f(blk[2] | (blk[3] << 8)), dxv = dx[(size_t)tc * nsuper + s];
+                float a1 = d * dxv, a2 = dmin * dxv;
+                parts[((size_t)wr * N + tc) * nsuper + s] = a1 * (float)a[i] - a2 * (float)am[i];
+            }
+        }
+        __syncwarp();
+    }
+}
+__global__ void q4k_combine(const float* parts, float* out, unsigned M, unsigned N, unsigned nsuper) {
+    unsigned idx = blockIdx.x * blockDim.x + threadIdx.x; if (idx >= M * N) return;
+    float tmp[256];
+    const float* p = parts + (size_t)idx * nsuper;
+    for (unsigned s = 0u; s < nsuper; s++) tmp[s] = p[s];
+    out[idx] = ftree(tmp, nsuper);
+}
+
 int main(int argc, char** argv) {
     int M = argc > 1 ? atoi(argv[1]) : 256, N = argc > 2 ? atoi(argv[2]) : 64, nsuper = argc > 3 ? atoi(argv[3]) : 20;
     int K = nsuper * 256, iters = argc > 4 ? atoi(argv[4]) : 50;
@@ -194,6 +269,23 @@ int main(int argc, char** argv) {
     cudaEvent_t s0, e0; cudaEventCreate(&s0); cudaEventCreate(&e0);
     cudaEventRecord(s0); for (int it = 0; it < iters; it++) q4k_imma<<<warps, 32, shmem>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
     cudaEventRecord(e0); cudaEventSynchronize(e0); float ms = 0; cudaEventElapsedTime(&ms, s0, e0); ms /= iters;
-    printf("q4k-imma: %.3f ms/GEMM  %.1f int8-TOPS (effective)\n", ms, 2.0 * M * N * K / (ms * 1e-3) / 1e12);
+    printf("v1 single-pass : %.3f ms  %.1f int8-TOPS\n", ms, 2.0 * M * N * K / (ms * 1e-3) / 1e12);
+
+    // ---- v2: two-pass, weight-reuse ----
+    float* dparts; cudaMalloc(&dparts, (size_t)M * N * nsuper * 4);
+    unsigned NT = N / 16u;
+    size_t sh2 = (16 * 32 + 16 * 32) + 256 * 4 + (size_t)NT * 256 * 4 * 2 + 16 * 4 + 16 * 4;
+    cudaFuncSetAttribute(q4k_imma_p1, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)sh2);
+    q4k_imma_p1<<<M / 16, 32, sh2>>>(dW, ddx, dqs, dbs, dparts, M, N, nsuper);
+    q4k_combine<<<((size_t)M * N + 127) / 128, 128>>>(dparts, dout, M, N, nsuper);
+    cudaError_t e2 = cudaDeviceSynchronize();
+    if (e2 != cudaSuccess) { printf("v2 launch error: %s (sh2=%zu)\n", cudaGetErrorString(e2), sh2); return 1; }
+    float* gpu2 = (float*)malloc((size_t)M * N * 4); cudaMemcpy(gpu2, dout, (size_t)M * N * 4, cudaMemcpyDeviceToHost);
+    size_t d2 = 0, f2 = (size_t)-1; for (size_t i = 0; i < (size_t)M * N; i++) { unsigned a, b; memcpy(&a, &ref[i], 4); memcpy(&b, &gpu2[i], 4); if (a != b) { if (f2 == (size_t)-1) f2 = i; d2++; } }
+    printf("v2 two-pass bit-identity: %zu/%d diffs%s", d2, M * N, d2 ? "" : "  -> BIT-IDENTICAL\n");
+    if (d2) printf("   first @ %zu ref=%g gpu=%g\n", f2, ref[f2], gpu2[f2]);
+    cudaEventRecord(s0); for (int it = 0; it < iters; it++) { q4k_imma_p1<<<M / 16, 32, sh2>>>(dW, ddx, dqs, dbs, dparts, M, N, nsuper); q4k_combine<<<((size_t)M * N + 127) / 128, 128>>>(dparts, dout, M, N, nsuper); }
+    cudaEventRecord(e0); cudaEventSynchronize(e0); float ms2 = 0; cudaEventElapsedTime(&ms2, s0, e0); ms2 /= iters;
+    printf("v2 two-pass    : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1)\n", ms2, 2.0 * M * N * K / (ms2 * 1e-3) / 1e12, ms / ms2);
     return 0;
 }

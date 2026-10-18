@@ -203,6 +203,41 @@ Still outstanding for enterprise readiness: that perf pass; wiring regime-3 into
 prefill batching; the one-time re-anchor of published digests; robustness across shapes/quant mixes;
 and bit-identity CI across GPU archs.
 
+### Perf-pass findings so far (both bit-identical, neither fast)
+
+Two kernel structures, both validated bit-identical (0 diffs, M=4096 N=256) on a T4:
+
+| kernel | int8-TOPS | note |
+|---|---|---|
+| v1 — one warp per 16×16 tile | 0.6 | good occupancy (4096 warps), but re-reads weights once per token-tile |
+| v2 — one warp per 16 rows, weight-reuse across all N | 0.3 | weights read once total, but only 256 warps → occupancy collapses |
+
+The lesson: weight-reuse, occupancy, and tensor-core feeding **trade off against each other** and must be
+co-optimized — the fast design is a *multi-warp block* (one block owns 16 rows × a wide N, warps split N
+and share one shared-memory weight staging, per-warp register accumulators, double-buffered loads). That is
+the real MMQ kernel and a dedicated multi-day optimization, not an incremental tweak. Correctness/bit-identity
+is solved; production throughput is the remaining engineering.
+
+A portability caveat found along the way: applying the per-sub-block *per-row* integer scale efficiently wants
+direct access to the WMMA accumulator fragment, whose element→(row,col) layout is **opaque/arch-specific**.
+Relying on it would re-introduce an arch dependence and threaten the cross-GPU bit-identity that is the whole
+point. The portable route (`store_matrix_sync` to shared, scale there) is what these kernels use — and it is
+part of why the epilogue is expensive. A `__dp4a`-based tiled MMQ (no opaque fragment; scales applied in
+registers) is the more determinism-aligned production path, at a lower peak than WMMA but no portability risk.
+
+## Program to "enterprise-ready" regime-3 (sequenced)
+
+1. **Perf pass** (engineering, multi-day): the co-optimized multi-warp MMQ kernel above (WMMA or tiled-`__dp4a`),
+   to approach the int8-TOPS ceiling while staying bit-identical. Gate: `q4k_imma_test` bit-identity at every step.
+2. **Forward integration**: a `regime=3` path in `run_quantized_with_forward` that batches prefill tokens (N>1)
+   through the integer GEMM and keeps decode (N=1) on the existing path or a GEMV; CPU reference stays
+   `dot_q4k_q8_block`.
+3. **Re-anchor** — a **release/governance decision, not a silent code change.** Regime-3 produces different
+   digests, so every published anchor/receipt must be regenerated in a coordinated, versioned migration;
+   external verifiers of old receipts must be told. Requires explicit product sign-off before execution.
+4. **Robustness + CI**: all shapes and quant mixes (Q4_K/Q5_0/Q6_K/Q8_0, tied embeddings, GQA, NeoX),
+   and a bit-identity gate on Apple + NVIDIA (sm_75/86/89/90) runners on every kernel change.
+
 ## Caveats (stated plainly)
 
 - **The GPU is an A10G (24 GB), not an L40S/H100 "flagship."** The 48 GB L40S (g6e) was
