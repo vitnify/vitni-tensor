@@ -64,6 +64,15 @@ extern "C" {
     fn vt_cuda_device_name() -> *const c_char;
     fn vt_cuda_test_linear(kind: c_int, k: c_int, m: c_int, x: *const f32, w: *const u8, wlen: usize, out: *mut f32, iters: c_int) -> c_int;
     fn vt_cuda_test_linear_int(k: c_int, m: c_int, x: *const f32, w: *const u8, wlen: usize, out: *mut f32, mode: c_int, iters: c_int) -> c_int;
+    fn vt_cuda_test_prefill_q4k(k: c_int, m: c_int, n: c_int, x: *const f32, w: *const u8, wlen: usize, out: *mut f32, iters: c_int) -> c_int;
+}
+
+/// Batched regime-3 Q4_K linear: out[N][M] token-major = W[M,K].x[N,K]. For the prefill GEMM.
+pub fn test_prefill_q4k(k: usize, m: usize, n: usize, x: &[f32], w: &[u8], iters: i32) -> Vec<f32> {
+    let mut out = vec![0.0f32; n * m];
+    let rc = unsafe { vt_cuda_test_prefill_q4k(k as c_int, m as c_int, n as c_int, x.as_ptr(), w.as_ptr(), w.len(), out.as_mut_ptr(), iters) };
+    assert_eq!(rc, 0, "vt_cuda_test_prefill_q4k rc={rc}");
+    out
 }
 
 /// TIER-2 (regime-3) integer Q4_K linear: out[M]=W.x[K] via int8-activation integer dot.
@@ -488,6 +497,43 @@ mod tests {
         assert_eq!(bit(&gpu_dp4a, &cpu), m, "GPU __dp4a != CPU");
         assert_eq!(bit(&gpu_warp, &cpu), m, "GPU warp integer != CPU");
         assert_eq!(bit(&gpu_wdp4a, &cpu), m, "GPU warp+dp4a != CPU");
+    }
+
+    /// Batched prefill Q4_K GEMM: bit-identical to the engine's regime-3 linear (per token) AND
+    /// fast (weights staged once, reused across the token batch). N = prefill width.
+    #[test]
+    #[ignore = "needs a Q4_K model + NVIDIA GPU; set VITNI_GGUF_7B"]
+    fn prefill_q4k_matches_and_is_fast() {
+        use std::time::Instant;
+        use vitni_tensor::ops::quant::linear_q4_k_integer_rs;
+        let path = std::env::var("VITNI_GGUF_7B").expect("set VITNI_GGUF_7B");
+        let file = std::fs::File::open(&path).expect("open gguf");
+        let mmap = unsafe { memmap2::Mmap::map(&file).expect("mmap gguf") };
+        let blob: &[u8] = &mmap;
+        let gguf = GgufFile::parse(blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        eprintln!("device: {}", device_name());
+        // layer-0 w1 (Q4_K), N prompt-width tokens
+        let t = &weights.layers[0].w1;
+        assert_eq!(format!("{:?}", t.dtype), "Q4_K", "w1 not Q4_K");
+        let k = cfg.dim; let m = cfg.hidden_dim; let n = 64usize;
+        let x: Vec<f32> = (0..n * k).map(|i| ((i as f32 * 0.6180339887).fract() - 0.5) * 2.0).collect();
+
+        let gpu = test_prefill_q4k(k, m, n, &x, t.bytes, 1); // out[N][M] token-major
+        // CPU regime-3 reference per token
+        let mut diffs = 0usize; let mut first = None;
+        for tok in 0..n {
+            let mut cpu = vec![0f32; m];
+            linear_q4_k_integer_rs(&x[tok * k..(tok + 1) * k], t.bytes, &mut cpu, 1, k, m).unwrap();
+            for row in 0..m { if cpu[row].to_bits() != gpu[tok * m + row].to_bits() { diffs += 1; if first.is_none() { first = Some((tok, row, cpu[row], gpu[tok * m + row])); } } }
+        }
+        eprintln!("batched Q4_K GEMM vs CPU regime-3 (per token): {} diffs of {}", diffs, n * m);
+        if let Some((tk, r, c, g)) = first { eprintln!("  first @ tok {} row {}: cpu={} gpu={}", tk, r, c, g); }
+        let iters = 50;
+        let t0 = Instant::now(); let _ = test_prefill_q4k(k, m, n, &x, t.bytes, iters); let ms = t0.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+        eprintln!("batched Q4_K GEMM: {:.3} ms  {:.1} int8-TOPS  (M={} N={} K={})", ms, 2.0 * m as f64 * n as f64 * k as f64 / (ms * 1e-3) / 1e12, m, n, k);
+        assert_eq!(diffs, 0, "batched Q4_K GEMM != CPU regime-3");
     }
 
     /// Engagement proof (fast, no CPU recompute): a GPU regime-3 step must differ from a GPU

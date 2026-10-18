@@ -584,6 +584,73 @@ __global__ void k_q6k_rs(const float* dx, const signed char* qs, const unsigned 
     out[gid] = acc ? (out[gid] + sum) : sum;
 }
 
+// ====================================================================
+// Batched prefill GEMMs (regime-3): out[N tokens][M rows] (token-major) = running-sum integer
+// dot, register-tiled (ported from the v4 dp4a kernel) so weights are staged once in shared and
+// reused across the token batch. acc != 0 fuses the residual. Bit-identical to the per-token
+// k_q4k_rs / k_q6k_rs looped over tokens (same integer dot, same running-sum order).
+// ====================================================================
+// Batched Q8 quantize: x[N][K] -> dx[N][ns], qs[N][ns*256] int8, bsums[N][ns*8].
+__global__ void k_q8_quant_batch(const float* x, float* dx, signed char* qs, int* bsums, unsigned N, unsigned K, unsigned ns) {
+    unsigned idx = blockIdx.x * blockDim.x + threadIdx.x; if (idx >= N * ns) return;
+    unsigned n = idx / ns, s = idx % ns;
+    const float* xb = x + (size_t)n * K + s * 256u;
+    float amax = 0.0f; for (int i = 0; i < 256; i++) { float a = fabsf(xb[i]); if (a > amax) amax = a; }
+    float d = amax / 127.0f, inv = d != 0.0f ? 1.0f / d : 0.0f;
+    dx[(size_t)n * ns + s] = d;
+    signed char* qo = qs + ((size_t)n * ns + s) * 256u;
+    int* b = bsums + ((size_t)n * ns + s) * 8u; for (int g = 0; g < 8; g++) b[g] = 0;
+    for (int i = 0; i < 256; i++) { float sc = xb[i] * inv; float bias = sc >= 0.0f ? 0.5f : -0.5f; int q = (int)(sc + bias); q = q < -127 ? -127 : (q > 127 ? 127 : q); qo[i] = (signed char)q; b[i / 32] += q; }
+}
+#define PBM 64
+#define PBN 64
+// Q4_K batched GEMM. W[M][ns*144], xq[N][ns*256], out[N][M] token-major. acc: out[n][m]+=.
+__global__ void __launch_bounds__(256) k_q4k_rs_gemm(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+                                                     float* out, unsigned M, unsigned N, unsigned ns, int acc) {
+    unsigned tm = blockIdx.x * PBM, tn = blockIdx.y * PBN, tid = threadIdx.x, trow = tid >> 4, tcol = tid & 15u;
+    __shared__ signed char wsh[PBM][256];
+    __shared__ signed char xsh[PBN][256];
+    __shared__ unsigned char scsh[PBM][8], msh[PBM][8];
+    __shared__ float dxsh[PBN];
+    __shared__ int bsh[PBN][8];
+    float outr[4][4]; for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) outr[a][b] = 0.0f;
+    float drow[4], dmrow[4];
+    for (unsigned s = 0u; s < ns; s++) {
+        for (unsigned i = tid; i < PBM * 256u; i += 256u) {
+            unsigned r = i >> 8, e = i & 255u, wr = tm + r; if (wr >= M) { wsh[r][e] = 0; continue; }
+            const unsigned char* qs = W + (size_t)wr * ns * 144u + s * 144u + 16u;
+            unsigned half = e >> 6, within = e & 63u, lo = within < 32u, l = within & 31u, q = qs[half * 32u + l];
+            wsh[r][e] = (signed char)(lo ? (q & 0x0Fu) : (q >> 4));
+        }
+        for (unsigned i = tid; i < PBN * 256u; i += 256u) { unsigned c = i >> 8, e = i & 255u, tc = tn + c; xsh[c][e] = (tc < N) ? xq[((size_t)tc * ns + s) * 256u + e] : 0; }
+        for (unsigned i = tid; i < PBM * 8u; i += 256u) { unsigned r = i >> 3, sub = i & 7u, wr = tm + r; if (wr >= M) { scsh[r][sub] = 0; msh[r][sub] = 0; continue; } const unsigned char* scb = W + (size_t)wr * ns * 144u + s * 144u + 4u; unsigned sv, mv; get_scale_min_k4(sub, scb, &sv, &mv); scsh[r][sub] = (unsigned char)sv; msh[r][sub] = (unsigned char)mv; }
+        for (unsigned i = tid; i < PBN; i += 256u) { unsigned tc = tn + i; if (tc < N) { dxsh[i] = dx[(size_t)tc * ns + s]; for (int g = 0; g < 8; g++) bsh[i][g] = bsums[((size_t)tc * ns + s) * 8u + g]; } else { dxsh[i] = 0; for (int g = 0; g < 8; g++) bsh[i][g] = 0; } }
+        for (int a = 0; a < 4; a++) { unsigned wr = tm + trow * 4u + a; if (wr < M) { const unsigned char* blk = W + (size_t)wr * ns * 144u + s * 144u; drow[a] = f16_to_f32(blk[0] | (blk[1] << 8)); dmrow[a] = f16_to_f32(blk[2] | (blk[3] << 8)); } }
+        __syncthreads();
+        for (int a = 0; a < 4; a++) {
+            unsigned r = trow * 4u + a;
+            for (int b = 0; b < 4; b++) {
+                unsigned c = tcol * 4u + b; int accq = 0, accm = 0;
+                for (unsigned half = 0u; half < 4u; half++) {
+                    unsigned base = half * 64u; int slo = 0, shi = 0;
+                    const signed char* wlo = &wsh[r][base]; const signed char* whi = &wsh[r][base + 32];
+                    const signed char* xlo = &xsh[c][base]; const signed char* xhi = &xsh[c][base + 32];
+                    for (int k = 0; k < 32; k += 4) { slo = __dp4a(*(const int*)(wlo + k), *(const int*)(xlo + k), slo); shi = __dp4a(*(const int*)(whi + k), *(const int*)(xhi + k), shi); }
+                    accq += (int)scsh[r][half * 2u] * slo + (int)scsh[r][half * 2u + 1u] * shi;
+                    accm += (int)msh[r][half * 2u] * bsh[c][half * 2u] + (int)msh[r][half * 2u + 1u] * bsh[c][half * 2u + 1u];
+                }
+                float a1 = drow[a] * dxsh[c], a2 = dmrow[a] * dxsh[c];
+                outr[a][b] += a1 * (float)accq - a2 * (float)accm;   // running sum over super-blocks
+            }
+        }
+        __syncthreads();
+    }
+    for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) {
+        unsigned wr = tm + trow * 4u + a, tc = tn + tcol * 4u + b;
+        if (wr < M && tc < N) { size_t o = (size_t)tc * M + wr; out[o] = acc ? (out[o] + outr[a][b]) : outr[a][b]; }
+    }
+}
+
 // ============================ host driver (C ABI) ============================
 
 typedef struct {
@@ -832,6 +899,27 @@ extern "C" int vt_cuda_test_linear_int(int K, int M, const float* x, const unsig
     if (cudaDeviceSynchronize() != cudaSuccess) return -2;
     cudaMemcpy(out, dout, (size_t)M * 4, cudaMemcpyDeviceToHost);
     cudaFree(dx_in); cudaFree(dw); cudaFree(ddx); cudaFree(dout); cudaFree(dqs); cudaFree(dbs);
+    return 0;
+}
+
+// Batched prefill Q4_K linear test: out[N][M] (token-major) = W[M,K] . x[N,K], regime-3.
+extern "C" int vt_cuda_test_prefill_q4k(int K, int M, int N, const float* x, const unsigned char* w, size_t wlen, float* out, int iters) {
+    int ns = K / 256; int err = 0;
+    float* dX = dev_floats(x, (size_t)N * K, &err);
+    unsigned char* dW = dev_bytes(w, wlen, &err);
+    float* ddx = dev_zeros((size_t)N * ns, &err);
+    float* dout = dev_zeros((size_t)N * M, &err);
+    signed char* dqs = nullptr; int* dbs = nullptr;
+    if (cudaMalloc(&dqs, (size_t)N * ns * 256) != cudaSuccess) err = 1;
+    if (cudaMalloc(&dbs, (size_t)N * ns * 8 * 4) != cudaSuccess) err = 1;
+    if (err) return -1;
+    k_q8_quant_batch<<<((size_t)N * ns + 127) / 128, 128>>>(dX, ddx, dqs, dbs, N, K, ns);
+    dim3 grid((M + PBM - 1) / PBM, (N + PBN - 1) / PBN), blk(256);
+    for (int it = 0; it < (iters < 1 ? 1 : iters); it++)
+        k_q4k_rs_gemm<<<grid, blk>>>(dW, ddx, dqs, dbs, dout, M, N, ns, 0);
+    if (cudaDeviceSynchronize() != cudaSuccess) return -2;
+    cudaMemcpy(out, dout, (size_t)N * M * 4, cudaMemcpyDeviceToHost);
+    cudaFree(dX); cudaFree(dW); cudaFree(ddx); cudaFree(dout); cudaFree(dqs); cudaFree(dbs);
     return 0;
 }
 
