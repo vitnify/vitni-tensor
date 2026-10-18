@@ -19,6 +19,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cuda_runtime.h>
+#include <mma.h>
+using namespace nvcuda;
 
 // ============================ device helpers ============================
 // (verbatim from kernels/cuda_forward_conformance.cu — proven bit-exact on T4)
@@ -651,6 +653,75 @@ __global__ void __launch_bounds__(256) k_q4k_rs_gemm(const unsigned char* W, con
     }
 }
 
+// Q4_K batched GEMM on int8 TENSOR CORES (WMMA), bit-identical to k_q4k_rs_gemm (same integer dot,
+// same running-sum float epilogue). The per-sub-block integer scale is applied IN the accumulator
+// fragment — no store_matrix_sync in the hot path — using a rowmap/colmap derived from the hardware
+// at kernel start (tag each lane's 8 elements, one store, read back the (row,col) they land on;
+// portable, nothing arch-hardcoded). A wide QKM×QKN block stages weights + activations once per
+// super-block and reuses them across all its tiles. out[N][M] token-major, acc residual. ~2× dp4a.
+#define QKM 64
+#define QKN 64
+#define QKW 8
+__global__ void __launch_bounds__(QKW * 32) k_q4k_rs_gemm_wmma(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+                                                               float* out, unsigned M, unsigned N, unsigned ns, int acc) {
+    const unsigned MT = QKM / 16u, NT = QKN / 16u, NTILES = MT * NT, TPW = NTILES / QKW;
+    unsigned wib = threadIdx.x >> 5, lane = threadIdx.x & 31u, tid = threadIdx.x, nthr = QKW * 32u;
+    unsigned mbase = blockIdx.x * QKM, nbase = blockIdx.y * QKN;
+    __shared__ signed char wsh[QKM][256], xsh[QKN][256];
+    __shared__ unsigned char scsh[QKM][8], msh[QKM][8];
+    __shared__ float drow[QKM], dmrow[QKM], dxsh[QKN];
+    __shared__ int bsh[QKN][8];
+    __shared__ int probe[QKW][16][16];
+
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, signed char, wmma::row_major> fa;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, signed char, wmma::col_major> fb;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, int> fc;
+
+    int rowmap[8], colmap[8];
+    for (int e = 0; e < fc.num_elements; e++) fc.x[e] = (int)(lane * 8u + (unsigned)e);
+    wmma::store_matrix_sync(&probe[wib][0][0], fc, 16, wmma::mem_row_major);
+    __syncwarp();
+    for (int e = 0; e < 8; e++) { rowmap[e] = 0; colmap[e] = 0; }
+    for (int r = 0; r < 16; r++) for (int c = 0; c < 16; c++) { int id = probe[wib][r][c]; if (((unsigned)id >> 3) == lane) { int e = id & 7; rowmap[e] = r; colmap[e] = c; } }
+    __syncthreads();
+
+    float outacc[2][8]; for (unsigned i = 0; i < TPW; i++) for (int e = 0; e < 8; e++) outacc[i][e] = 0.0f;
+    for (unsigned s = 0u; s < ns; s++) {
+        for (unsigned i = tid; i < QKM * 256u; i += nthr) {
+            unsigned r = i >> 8, e = i & 255u, wr = mbase + r;
+            if (wr >= M) { wsh[r][e] = 0; continue; }
+            const unsigned char* qs = W + (size_t)wr * ns * 144u + s * 144u + 16u;
+            unsigned half = e >> 6, within = e & 63u, lo = within < 32u, l = within & 31u, q = qs[half * 32u + l];
+            wsh[r][e] = (signed char)(lo ? (q & 0x0Fu) : (q >> 4));
+        }
+        for (unsigned i = tid; i < QKN * 256u; i += nthr) { unsigned c = i >> 8, e = i & 255u, tc = nbase + c; xsh[c][e] = (tc < N) ? xq[((size_t)tc * ns + s) * 256u + e] : 0; }
+        for (unsigned i = tid; i < QKM * 8u; i += nthr) { unsigned r = i >> 3, sub = i & 7u, wr = mbase + r; if (wr >= M) { scsh[r][sub] = 0; msh[r][sub] = 0; continue; } const unsigned char* scb = W + (size_t)wr * ns * 144u + s * 144u + 4u; unsigned sv, mv; get_scale_min_k4(sub, scb, &sv, &mv); scsh[r][sub] = (unsigned char)sv; msh[r][sub] = (unsigned char)mv; }
+        for (unsigned i = tid; i < QKM; i += nthr) { unsigned wr = mbase + i; if (wr < M) { const unsigned char* blk = W + (size_t)wr * ns * 144u + s * 144u; drow[i] = f16_to_f32(blk[0] | (blk[1] << 8)); dmrow[i] = f16_to_f32(blk[2] | (blk[3] << 8)); } else { drow[i] = 0.0f; dmrow[i] = 0.0f; } }
+        for (unsigned i = tid; i < QKN; i += nthr) { unsigned tc = nbase + i; if (tc < N) { dxsh[i] = dx[(size_t)tc * ns + s]; for (int g = 0; g < 8; g++) bsh[i][g] = bsums[((size_t)tc * ns + s) * 8u + g]; } else { dxsh[i] = 0.0f; for (int g = 0; g < 8; g++) bsh[i][g] = 0; } }
+        __syncthreads();
+        int accq[2][8], accm[2][8]; for (unsigned i = 0; i < TPW; i++) for (int e = 0; e < 8; e++) { accq[i][e] = 0; accm[i][e] = 0; }
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned base = (sub >> 1) * 64u + (sub & 1u) * 32u;
+            for (unsigned i = 0; i < TPW; i++) {
+                unsigned t = wib * TPW + i, mt = t / NT, nt = t % NT;
+                wmma::fill_fragment(fc, 0);
+                wmma::load_matrix_sync(fa, &wsh[mt * 16u][base], 256);       wmma::load_matrix_sync(fb, &xsh[nt * 16u][base], 256);       wmma::mma_sync(fc, fa, fb, fc);
+                wmma::load_matrix_sync(fa, &wsh[mt * 16u][base + 16u], 256); wmma::load_matrix_sync(fb, &xsh[nt * 16u][base + 16u], 256); wmma::mma_sync(fc, fa, fb, fc);
+                for (int e = 0; e < 8; e++) { int r = rowmap[e], cc = colmap[e]; accq[i][e] += (int)scsh[mt * 16u + r][sub] * fc.x[e]; accm[i][e] += (int)msh[mt * 16u + r][sub] * bsh[nt * 16u + cc][sub]; }
+            }
+        }
+        for (unsigned i = 0; i < TPW; i++) {
+            unsigned t = wib * TPW + i, mt = t / NT, nt = t % NT;
+            for (int e = 0; e < 8; e++) { int r = rowmap[e], cc = colmap[e]; float a1 = drow[mt * 16u + r] * dxsh[nt * 16u + cc], a2 = dmrow[mt * 16u + r] * dxsh[nt * 16u + cc]; outacc[i][e] += a1 * (float)accq[i][e] - a2 * (float)accm[i][e]; }
+        }
+        __syncthreads();
+    }
+    for (unsigned i = 0; i < TPW; i++) {
+        unsigned t = wib * TPW + i, mt = t / NT, nt = t % NT;
+        for (int e = 0; e < 8; e++) { unsigned wr = mbase + mt * 16u + rowmap[e], tc = nbase + nt * 16u + colmap[e]; if (wr < M && tc < N) { size_t o = (size_t)tc * M + wr; out[o] = acc ? (out[o] + outacc[i][e]) : outacc[i][e]; } }
+    }
+}
+
 // ============================ host driver (C ABI) ============================
 
 typedef struct {
@@ -923,7 +994,8 @@ static inline void pg(const float* in, unsigned in_dim, const unsigned char* w, 
     unsigned ns = in_dim / 256u;
     k_q8_quant_batch<<<((size_t)P * ns + 127) / 128, 128>>>(in, q8dx, q8qs, q8bsums, P, in_dim, ns);
     if (is_q6k) k_q6k_rs_gemm_simple<<<((size_t)out_dim * P + 127) / 128, 128>>>(q8dx, q8qs, w, out, out_dim, P, ns, acc);
-    else { dim3 grid((out_dim + PBM - 1) / PBM, (P + PBN - 1) / PBN); k_q4k_rs_gemm<<<grid, 256>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
+    else if (getenv("VITNI_Q4K_DP4A")) { dim3 grid((out_dim + PBM - 1) / PBM, (P + PBN - 1) / PBN); k_q4k_rs_gemm<<<grid, 256>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
+    else { dim3 grid((out_dim + QKM - 1) / QKM, (P + QKN - 1) / QKN); k_q4k_rs_gemm_wmma<<<grid, QKW * 32>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
 }
 
 // Batched prefill forward (regime-3): processes P prompt tokens together — linears as batched
@@ -993,9 +1065,9 @@ extern "C" int vt_cuda_test_prefill_q4k(int K, int M, int N, const float* x, con
     if (cudaMalloc(&dbs, (size_t)N * ns * 8 * 4) != cudaSuccess) err = 1;
     if (err) return -1;
     k_q8_quant_batch<<<((size_t)N * ns + 127) / 128, 128>>>(dX, ddx, dqs, dbs, N, K, ns);
-    dim3 grid((M + PBM - 1) / PBM, (N + PBN - 1) / PBN), blk(256);
+    dim3 grid((M + QKM - 1) / QKM, (N + QKN - 1) / QKN);
     for (int it = 0; it < (iters < 1 ? 1 : iters); it++)
-        k_q4k_rs_gemm<<<grid, blk>>>(dW, ddx, dqs, dbs, dout, M, N, ns, 0);
+        k_q4k_rs_gemm_wmma<<<grid, QKW * 32>>>(dW, ddx, dqs, dbs, dout, M, N, ns, 0);
     if (cudaDeviceSynchronize() != cudaSuccess) return -2;
     cudaMemcpy(out, dout, (size_t)N * M * 4, cudaMemcpyDeviceToHost);
     cudaFree(dX); cudaFree(dW); cudaFree(ddx); cudaFree(dout); cudaFree(dqs); cudaFree(dbs);

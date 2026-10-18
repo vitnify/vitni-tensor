@@ -248,10 +248,53 @@ super-block and reuse them across `WN` token tiles (the MMQ weight-reuse win), e
 in-register scaling. v7 is likewise **bit-identical** and is the **fastest bit-identical kernel — 2.0–2.1 TOPS,
 beating the v4 dp4a kernel by 1.1–1.35×** (WN=4 optimal; WN≥8 exceeds 48 KB static shared on the T4).
 
-The epilogue problem is **solved** (in-register scaling, bit-identical, portable). The remaining gap to the
-plain-IMMA ceiling (7.8 TOPS) is no longer the epilogue — it is per-super-block **staging/unpack bandwidth** and
-occupancy (v7 plateaus at ~2.1 across N=256→1024, i.e. no longer weight-reuse-limited). Closing that is the next
-tier: double-buffered / `cp.async` staging, `>48 KB` shared for wider blocks, and an Ada/Hopper IMMA variant.
+The epilogue problem is **solved** (in-register scaling, bit-identical, portable). The remaining gap on the T4 was
+staging bandwidth, which the next tier closes.
+
+### The wide tile (v8/v9) — cashing in the tensor-core payoff on a real inference GPU
+
+v7's residual loss was that it re-stages the activations **once per M-tile** (at M=4096 that is 256× redundant).
+**v8** fixes it with a wide `BM×BN` block that stages BM weight rows **and** BN activation cols once per super-block
+and reuses them across all `(BM/16)·(BN/16)` tiles; each warp owns several tiles. **v9** is the same kernel in
+*dynamic* shared memory, so `BM×BN` can exceed the 48 KB static cap (opt-in up to ~100 KB on sm_80+). Both keep the
+v6 in-register, store-derived scaling and are **bit-identical to `ref_dot_rs`** (0 diffs through M=4096 N=1024).
+
+Measured on an **A10G (sm_86)**, M=4096 N=256 K=4096 — a real datacenter inference GPU, not the weak T4:
+
+| kernel | int8-TOPS | vs dp4a (v4) |
+|---|---|---|
+| v4 — register-tiled `__dp4a` | 7.3 | 1.0× |
+| v7 — cooperative WMMA | 4.8 | 0.66× |
+| **v8 — wide WMMA (64×64, static shared)** | **10.2** | **2.07×** |
+| v9 — wide WMMA (128×128, dynamic shared, 87 KB) | 10.6 | 2.17× |
+
+The wide tile is the lever: v8 ≈ v9, i.e. staging amortization is captured by 64×64 and going wider barely helps
+(v9 plateaus; 128×256 at 124 KB exceeds the A10G's ~100 KB limit). The WMMA tensor-core GEMM is now **~2× the dp4a
+kernel and bit-identical** — the tensor-core payoff, realized. (On the A10G, `__dp4a` is itself strong, so v7's
+per-M-tile restaging actually lost to it; v8's wide staging is what wins.)
+
+### Wired into the backend prefill (end-to-end, bit-identical)
+
+v8 is ported into `cuda/vt_cuda.cu` as `k_q4k_rs_gemm_wmma` (token-major `out[N][M]`, `acc` residual, ragged
+M/N via zero-staging) and is the Q4_K GEMM in the batched prefill (`pg()`); `VITNI_Q4K_DP4A=1` falls back to the
+dp4a kernel for A/B measurement. Validated on an A10G with TinyLlama-1.1B Q4_K_M:
+
+- **GEMM vs engine `linear_q4_k_integer_rs`: 0 diffs of 360,448** (per-token, M=5632 N=64 K=2048).
+- **Full prefill cert bit-identical**: CPU regime-3 `[9d,20,db,01]` == GPU r3+prefill `[9d,20,db,01]`.
+- **Prefill (64 tokens): per-token 2.27 s → batched 0.61 s = 3.72×** (dp4a: 0.67 s = 3.39×).
+
+**Finding (honest, and it redirects the effort):** at the GEMM level the WMMA kernel is ~2× dp4a, but end-to-end it
+moves the prefill only 0.67→0.61 s (~10%, 3.39×→3.72×). The batched-prefill **architecture** is the big e2e lever
+(~3.4×); the Q4_K GEMM is **no longer the prefill bottleneck**. On TinyLlama the remaining time is the **unbatched
+attention / RoPE / RMS loops and the non-tiled Q6_K GEMM**. So the wide WMMA GEMM is the right kernel and matters
+most on **GEMM-dominated** workloads (large models, larger prompt batches); for TinyLlama-class prefill the next big
+win is **batching attention/rope/rms + tiling Q6_K**, not further GEMM tuning.
+
+Levers tried and **not** pursued, with the reason: wider-than-64×64 blocks (v9, the `>48 KB` item) — built,
+measured, plateaus. Double-buffered / `cp.async` staging and an `mma.sync m16n8k32` (K=32/instruction, the
+"Ada/Hopper IMMA") path would push the GEMM past 2× further, but the data above shows that is off the critical path
+for this prefill; they belong to a GEMM-bound (large-model/large-batch) pass, and `mma.sync` could not be validated
+on sm_89/90 here (the L40S stayed capacity-blocked). The wide-WMMA kernel is forward-compatible across sm_75→90.
 
 ### The combine decision (regime-3 spec, GPU-critical)
 
@@ -279,15 +322,18 @@ ceiling with clear tuning headroom (double-buffering, wider tiles, an Ada/Hopper
 
 ## Program to "enterprise-ready" regime-3 (sequenced)
 
-1. **Perf pass** (engineering, multi-day): **epilogue-bound problem solved** — v7 (cooperative multi-warp WMMA with
-   in-register, store-derived per-sub-block scaling) is the fastest bit-identical kernel (~2.1 TOPS, beats dp4a).
-   Remaining headroom is staging/occupancy, not the epilogue: double-buffered / `cp.async` staging, `>48 KB` shared
-   for wider blocks, and an Ada/Hopper IMMA variant, to approach the int8-TOPS ceiling. Gate: `q4k_imma_test`
-   bit-identity at every step (held: 0 diffs through v7).
-2. **Forward integration**: port v7 into the backend's batched prefill (replacing the `__dp4a` `k_q4k_rs_gemm`) in
-   `run_quantized_with_prefill`, keeping decode (N=1) on the existing path or a GEMV; CPU reference stays
-   `linear_q4_k_integer_rs`. Expected modest end-to-end gain until the staging tier lands (prefill is also bound by
-   unbatched Q6_K/attention/rms).
+1. **Perf pass** — **DONE.** Epilogue solved (v6/v7), then the wide tile (v8/v9) made the WMMA tensor-core GEMM
+   **~2× the dp4a kernel** on an A10G (10.2 int8-TOPS, bit-identical), the staging amortization captured by a 64×64
+   block. The `>48 KB` wider-block lever (v9, dynamic shared) was built and measured — it plateaus. Double-buffered /
+   `cp.async` and `mma.sync m16n8k32` (Ada/Hopper IMMA) remain as GEMM-bound-case levers but the integration below
+   showed they are off the critical path for this prefill (and `mma.sync` could not be validated on sm_89/90 here).
+   Gate held: `q4k_imma_test` bit-identity at every step (0 diffs through v9, M=4096 N=1024).
+2. **Forward integration** — **DONE.** v8 is wired into the backend as `k_q4k_rs_gemm_wmma` and is the Q4_K GEMM in
+   the batched prefill (`pg()`; `VITNI_Q4K_DP4A=1` falls back to dp4a). GEMM bit-identical to the engine
+   `linear_q4_k_integer_rs` (0 diffs), full prefill cert bit-identical (CPU r3 == GPU r3+prefill), prefill **3.72×**
+   (A10G, TinyLlama, 64 tok; dp4a 3.39×). The batching architecture is the big e2e lever (~3.4×); the Q4_K GEMM is no
+   longer the prefill bottleneck, so the next e2e win is **batching attention/rope/rms + tiling the Q6_K GEMM**, not
+   more GEMM tuning. Decode (N=1) still uses the per-token path.
 3. **Re-anchor** — a **release/governance decision, not a silent code change.** Regime-3 produces different
    digests, so every published anchor/receipt must be regenerated in a coordinated, versioned migration;
    external verifiers of old receipts must be told. Requires explicit product sign-off before execution.

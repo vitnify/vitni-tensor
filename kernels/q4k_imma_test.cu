@@ -344,6 +344,156 @@ __global__ void __launch_bounds__(WN * 32) q4k_imma_v7(const unsigned char* W, c
     for (int e = 0; e < 8; e++) { unsigned wr = tm * 16u + rowmap[e], tc = nbase + wib * 16u + colmap[e]; if (wr < M && tc < N) out[(size_t)wr * N + tc] = outacc[e]; }
 }
 
+// ---- v8: wide BM×BN tiled block. The whole block stages BM weight rows AND BN activation cols
+// ONCE per super-block and reuses them across all (BM/16)·(BN/16) tiles — amortizing BOTH the
+// weight unpack AND the activation staging (v7 re-staged activations once per M-tile; at M=4096
+// that was 256× redundant). Each warp owns TPW tiles; in-register per-sub-block scaling as in v6/v7.
+// Bit-identical to ref_dot_rs. ----
+#ifndef BM
+#define BM 64
+#endif
+#ifndef BN
+#define BN 64
+#endif
+#ifndef BW
+#define BW 8
+#endif
+__global__ void __launch_bounds__(BW * 32) q4k_imma_v8(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+                                                       float* out, unsigned M, unsigned N, unsigned nsuper) {
+    const unsigned MT = BM / 16u, NT = BN / 16u, NTILES = MT * NT, TPW = NTILES / BW;
+    unsigned wib = threadIdx.x >> 5, lane = threadIdx.x & 31u, tid = threadIdx.x, nthr = BW * 32u;
+    unsigned mbase = blockIdx.x * BM, nbase = blockIdx.y * BN;
+    __shared__ signed char wsh[BM][256], xsh[BN][256];
+    __shared__ unsigned char scsh[BM][8], msh[BM][8];
+    __shared__ float drow[BM], dmrow[BM], dxsh[BN];
+    __shared__ int bsh[BN][8];
+    __shared__ int probe[BW][16][16];
+
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, signed char, wmma::row_major> fa;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, signed char, wmma::col_major> fb;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, int> fc;
+
+    int rowmap[8], colmap[8];
+    for (int e = 0; e < fc.num_elements; e++) fc.x[e] = (int)(lane * 8u + (unsigned)e);
+    wmma::store_matrix_sync(&probe[wib][0][0], fc, 16, wmma::mem_row_major);
+    __syncwarp();
+    for (int e = 0; e < 8; e++) { rowmap[e] = 0; colmap[e] = 0; }
+    for (int r = 0; r < 16; r++) for (int c = 0; c < 16; c++) { int id = probe[wib][r][c]; if (((unsigned)id >> 3) == lane) { int e = id & 7; rowmap[e] = r; colmap[e] = c; } }
+    __syncthreads();
+
+    float outacc[TPW][8]; for (unsigned i = 0; i < TPW; i++) for (int e = 0; e < 8; e++) outacc[i][e] = 0.0f;
+    for (unsigned s = 0u; s < nsuper; s++) {
+        for (unsigned i = tid; i < BM * 256u; i += nthr) {
+            unsigned r = i >> 8, e = i & 255u, wr = mbase + r;
+            const unsigned char* qs = W + (size_t)wr * nsuper * 144u + s * 144u + 16u;
+            unsigned half = e >> 6, within = e & 63u, lo = within < 32u, l = within & 31u, q = qs[half * 32u + l];
+            wsh[r][e] = (signed char)(lo ? (q & 0x0Fu) : (q >> 4));
+        }
+        for (unsigned i = tid; i < BN * 256u; i += nthr) { unsigned c = i >> 8, e = i & 255u, tc = nbase + c; xsh[c][e] = xq[((size_t)tc * nsuper + s) * 256u + e]; }
+        for (unsigned i = tid; i < BM * 8u; i += nthr) { unsigned r = i >> 3, sub = i & 7u, wr = mbase + r; const unsigned char* scb = W + (size_t)wr * nsuper * 144u + s * 144u + 4u; unsigned sv, mv; gsm(sub, scb, &sv, &mv); scsh[r][sub] = (unsigned char)sv; msh[r][sub] = (unsigned char)mv; }
+        for (unsigned i = tid; i < BM; i += nthr) { unsigned wr = mbase + i; const unsigned char* blk = W + (size_t)wr * nsuper * 144u + s * 144u; drow[i] = f16f(blk[0] | (blk[1] << 8)); dmrow[i] = f16f(blk[2] | (blk[3] << 8)); }
+        for (unsigned i = tid; i < BN; i += nthr) { unsigned tc = nbase + i; dxsh[i] = dx[(size_t)tc * nsuper + s]; for (int g = 0; g < 8; g++) bsh[i][g] = bsums[((size_t)tc * nsuper + s) * 8u + g]; }
+        __syncthreads();
+        int acc[TPW][8], accm[TPW][8]; for (unsigned i = 0; i < TPW; i++) for (int e = 0; e < 8; e++) { acc[i][e] = 0; accm[i][e] = 0; }
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned base = (sub >> 1) * 64u + (sub & 1u) * 32u;
+            for (unsigned i = 0; i < TPW; i++) {
+                unsigned t = wib * TPW + i, mt = t / NT, nt = t % NT;
+                wmma::fill_fragment(fc, 0);
+                wmma::load_matrix_sync(fa, &wsh[mt * 16u][base], 256);       wmma::load_matrix_sync(fb, &xsh[nt * 16u][base], 256);       wmma::mma_sync(fc, fa, fb, fc);
+                wmma::load_matrix_sync(fa, &wsh[mt * 16u][base + 16u], 256); wmma::load_matrix_sync(fb, &xsh[nt * 16u][base + 16u], 256); wmma::mma_sync(fc, fa, fb, fc);
+                for (int e = 0; e < 8; e++) { int r = rowmap[e], cc = colmap[e]; acc[i][e] += (int)scsh[mt * 16u + r][sub] * fc.x[e]; accm[i][e] += (int)msh[mt * 16u + r][sub] * bsh[nt * 16u + cc][sub]; }
+            }
+        }
+        for (unsigned i = 0; i < TPW; i++) {
+            unsigned t = wib * TPW + i, mt = t / NT, nt = t % NT;
+            for (int e = 0; e < 8; e++) { int r = rowmap[e], cc = colmap[e]; float a1 = drow[mt * 16u + r] * dxsh[nt * 16u + cc], a2 = dmrow[mt * 16u + r] * dxsh[nt * 16u + cc]; outacc[i][e] += a1 * (float)acc[i][e] - a2 * (float)accm[i][e]; }
+        }
+        __syncthreads();
+    }
+    for (unsigned i = 0; i < TPW; i++) {
+        unsigned t = wib * TPW + i, mt = t / NT, nt = t % NT;
+        for (int e = 0; e < 8; e++) { unsigned wr = mbase + mt * 16u + rowmap[e], tc = nbase + nt * 16u + colmap[e]; if (wr < M && tc < N) out[(size_t)wr * N + tc] = outacc[i][e]; }
+    }
+}
+
+// ---- v9: v8's wide tile, but in DYNAMIC shared memory so BM×BN can exceed the 48 KB static cap
+// (opt in via cudaFuncAttributeMaxDynamicSharedMemorySize; sm_80+ allows up to ~100 KB). Wider tiles
+// amortize the staging further (weight reuse = BN2/16, activation reuse = BM2/16). Same in-register
+// scaling; bit-identical. ----
+#ifndef BM2
+#define BM2 128
+#endif
+#ifndef BN2
+#define BN2 64
+#endif
+#ifndef BW2
+#define BW2 8
+#endif
+__global__ void __launch_bounds__(BW2 * 32) q4k_imma_v9(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+                                                        float* out, unsigned M, unsigned N, unsigned nsuper) {
+    const unsigned MT = BM2 / 16u, NT = BN2 / 16u, NTILES = MT * NT, TPW = NTILES / BW2;
+    unsigned wib = threadIdx.x >> 5, lane = threadIdx.x & 31u, tid = threadIdx.x, nthr = BW2 * 32u;
+    unsigned mbase = blockIdx.x * BM2, nbase = blockIdx.y * BN2;
+    extern __shared__ unsigned char smem[];
+    signed char* wsh = (signed char*)smem;                 // [BM2][256]
+    signed char* xsh = wsh + (size_t)BM2 * 256;            // [BN2][256]
+    unsigned char* scsh = (unsigned char*)(xsh + (size_t)BN2 * 256); // [BM2][8]
+    unsigned char* msh = scsh + (size_t)BM2 * 8;           // [BM2][8]
+    float* drow = (float*)(msh + (size_t)BM2 * 8);         // [BM2]
+    float* dmrow = drow + BM2;                             // [BM2]
+    float* dxsh = dmrow + BM2;                             // [BN2]
+    int* bsh = (int*)(dxsh + BN2);                         // [BN2][8]
+    int* probe = bsh + (size_t)BN2 * 8;                    // [BW2][256]
+
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, signed char, wmma::row_major> fa;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, signed char, wmma::col_major> fb;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, int> fc;
+
+    int rowmap[8], colmap[8];
+    for (int e = 0; e < fc.num_elements; e++) fc.x[e] = (int)(lane * 8u + (unsigned)e);
+    wmma::store_matrix_sync(probe + (size_t)wib * 256, fc, 16, wmma::mem_row_major);
+    __syncwarp();
+    for (int e = 0; e < 8; e++) { rowmap[e] = 0; colmap[e] = 0; }
+    for (int r = 0; r < 16; r++) for (int c = 0; c < 16; c++) { int id = probe[(size_t)wib * 256 + r * 16 + c]; if (((unsigned)id >> 3) == lane) { int e = id & 7; rowmap[e] = r; colmap[e] = c; } }
+    __syncthreads();
+
+    float outacc[TPW][8]; for (unsigned i = 0; i < TPW; i++) for (int e = 0; e < 8; e++) outacc[i][e] = 0.0f;
+    for (unsigned s = 0u; s < nsuper; s++) {
+        for (unsigned i = tid; i < BM2 * 256u; i += nthr) {
+            unsigned r = i >> 8, e = i & 255u, wr = mbase + r;
+            const unsigned char* qs = W + (size_t)wr * nsuper * 144u + s * 144u + 16u;
+            unsigned half = e >> 6, within = e & 63u, lo = within < 32u, l = within & 31u, q = qs[half * 32u + l];
+            wsh[(size_t)r * 256 + e] = (signed char)(lo ? (q & 0x0Fu) : (q >> 4));
+        }
+        for (unsigned i = tid; i < BN2 * 256u; i += nthr) { unsigned c = i >> 8, e = i & 255u, tc = nbase + c; xsh[(size_t)c * 256 + e] = xq[((size_t)tc * nsuper + s) * 256u + e]; }
+        for (unsigned i = tid; i < BM2 * 8u; i += nthr) { unsigned r = i >> 3, sub = i & 7u, wr = mbase + r; const unsigned char* scb = W + (size_t)wr * nsuper * 144u + s * 144u + 4u; unsigned sv, mv; gsm(sub, scb, &sv, &mv); scsh[(size_t)r * 8 + sub] = (unsigned char)sv; msh[(size_t)r * 8 + sub] = (unsigned char)mv; }
+        for (unsigned i = tid; i < BM2; i += nthr) { unsigned wr = mbase + i; const unsigned char* blk = W + (size_t)wr * nsuper * 144u + s * 144u; drow[i] = f16f(blk[0] | (blk[1] << 8)); dmrow[i] = f16f(blk[2] | (blk[3] << 8)); }
+        for (unsigned i = tid; i < BN2; i += nthr) { unsigned tc = nbase + i; dxsh[i] = dx[(size_t)tc * nsuper + s]; for (int g = 0; g < 8; g++) bsh[(size_t)i * 8 + g] = bsums[((size_t)tc * nsuper + s) * 8u + g]; }
+        __syncthreads();
+        int acc[TPW][8], accm[TPW][8]; for (unsigned i = 0; i < TPW; i++) for (int e = 0; e < 8; e++) { acc[i][e] = 0; accm[i][e] = 0; }
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned base = (sub >> 1) * 64u + (sub & 1u) * 32u;
+            for (unsigned i = 0; i < TPW; i++) {
+                unsigned t = wib * TPW + i, mt = t / NT, nt = t % NT;
+                wmma::fill_fragment(fc, 0);
+                wmma::load_matrix_sync(fa, wsh + (size_t)mt * 16 * 256 + base, 256);       wmma::load_matrix_sync(fb, xsh + (size_t)nt * 16 * 256 + base, 256);       wmma::mma_sync(fc, fa, fb, fc);
+                wmma::load_matrix_sync(fa, wsh + (size_t)mt * 16 * 256 + base + 16, 256);   wmma::load_matrix_sync(fb, xsh + (size_t)nt * 16 * 256 + base + 16, 256);   wmma::mma_sync(fc, fa, fb, fc);
+                for (int e = 0; e < 8; e++) { int r = rowmap[e], cc = colmap[e]; acc[i][e] += (int)scsh[(size_t)(mt * 16u + r) * 8 + sub] * fc.x[e]; accm[i][e] += (int)msh[(size_t)(mt * 16u + r) * 8 + sub] * bsh[(size_t)(nt * 16u + cc) * 8 + sub]; }
+            }
+        }
+        for (unsigned i = 0; i < TPW; i++) {
+            unsigned t = wib * TPW + i, mt = t / NT, nt = t % NT;
+            for (int e = 0; e < 8; e++) { int r = rowmap[e], cc = colmap[e]; float a1 = drow[mt * 16u + r] * dxsh[nt * 16u + cc], a2 = dmrow[mt * 16u + r] * dxsh[nt * 16u + cc]; outacc[i][e] += a1 * (float)acc[i][e] - a2 * (float)accm[i][e]; }
+        }
+        __syncthreads();
+    }
+    for (unsigned i = 0; i < TPW; i++) {
+        unsigned t = wib * TPW + i, mt = t / NT, nt = t % NT;
+        for (int e = 0; e < 8; e++) { unsigned wr = mbase + mt * 16u + rowmap[e], tc = nbase + nt * 16u + colmap[e]; if (wr < M && tc < N) out[(size_t)wr * N + tc] = outacc[i][e]; }
+    }
+}
+
 // ---- WMMA kernel: one warp per 16x16 output tile ----
 __global__ void q4k_imma(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
                          float* out, unsigned M, unsigned N, unsigned nsuper) {
@@ -718,6 +868,42 @@ int main(int argc, char** argv) {
             cudaEventRecord(e0); cudaEventSynchronize(e0); float ms7 = 0; cudaEventElapsedTime(&ms7, s0, e0); ms7 /= iters;
             printf("v7 WMMA-coop(WN=%d) : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1, %.2fx vs v4-ref)\n", WN, ms7, 2.0 * M * N * K / (ms7 * 1e-3) / 1e12, ms / ms7, ms6 / ms7);
             free(gpu7);
+        }
+
+        // ---- v8: wide BM×BN tiled block (amortizes weight AND activation staging) ----
+        if (M % BM == 0 && N % BN == 0) {
+            dim3 grid8(M / BM, N / BN); unsigned tpb8 = BW * 32u;
+            q4k_imma_v8<<<grid8, tpb8>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+            cudaError_t e8 = cudaDeviceSynchronize();
+            if (e8 != cudaSuccess) { printf("v8 launch error: %s\n", cudaGetErrorString(e8)); return 1; }
+            float* gpu8 = (float*)malloc((size_t)M * N * 4); cudaMemcpy(gpu8, dout, (size_t)M * N * 4, cudaMemcpyDeviceToHost);
+            size_t d8 = 0, f8 = (size_t)-1; for (size_t i = 0; i < (size_t)M * N; i++) { unsigned a, b; memcpy(&a, &refrs[i], 4); memcpy(&b, &gpu8[i], 4); if (a != b) { if (f8 == (size_t)-1) f8 = i; d8++; } }
+            printf("v8 WMMA-wide bit-identity (vs running-sum ref): %zu/%d diffs%s", d8, M * N, d8 ? "" : "  -> BIT-IDENTICAL\n");
+            if (d8) printf("   first @ %zu refrs=%g gpu=%g\n", f8, refrs[f8], gpu8[f8]);
+            cudaEventRecord(s0); for (int it = 0; it < iters; it++) q4k_imma_v8<<<grid8, tpb8>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+            cudaEventRecord(e0); cudaEventSynchronize(e0); float ms8 = 0; cudaEventElapsedTime(&ms8, s0, e0); ms8 /= iters;
+            printf("v8 WMMA-wide(%dx%d,BW=%d) : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1, %.2fx vs v4-ref)\n", BM, BN, BW, ms8, 2.0 * M * N * K / (ms8 * 1e-3) / 1e12, ms / ms8, ms6 / ms8);
+            free(gpu8);
+        }
+
+        // ---- v9: dynamic-shared wide tile (>48KB blocks) ----
+        if (M % BM2 == 0 && N % BN2 == 0) {
+            size_t shmem9 = (size_t)BM2 * 256 + (size_t)BN2 * 256 + (size_t)BM2 * 16 + (size_t)BM2 * 8 + (size_t)BN2 * 4 + (size_t)BN2 * 32 + (size_t)BW2 * 1024;
+            cudaFuncSetAttribute(q4k_imma_v9, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)shmem9);
+            dim3 grid9(M / BM2, N / BN2); unsigned tpb9 = BW2 * 32u;
+            q4k_imma_v9<<<grid9, tpb9, shmem9>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+            cudaError_t e9 = cudaDeviceSynchronize();
+            if (e9 != cudaSuccess) { printf("v9 launch error: %s (shmem=%zu)\n", cudaGetErrorString(e9), shmem9); }
+            else {
+                float* gpu9 = (float*)malloc((size_t)M * N * 4); cudaMemcpy(gpu9, dout, (size_t)M * N * 4, cudaMemcpyDeviceToHost);
+                size_t d9 = 0, f9 = (size_t)-1; for (size_t i = 0; i < (size_t)M * N; i++) { unsigned a, b; memcpy(&a, &refrs[i], 4); memcpy(&b, &gpu9[i], 4); if (a != b) { if (f9 == (size_t)-1) f9 = i; d9++; } }
+                printf("v9 WMMA-dyn bit-identity (vs running-sum ref): %zu/%d diffs%s", d9, M * N, d9 ? "" : "  -> BIT-IDENTICAL\n");
+                if (d9) printf("   first @ %zu refrs=%g gpu=%g\n", f9, refrs[f9], gpu9[f9]);
+                cudaEventRecord(s0); for (int it = 0; it < iters; it++) q4k_imma_v9<<<grid9, tpb9, shmem9>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+                cudaEventRecord(e0); cudaEventSynchronize(e0); float ms9 = 0; cudaEventElapsedTime(&ms9, s0, e0); ms9 /= iters;
+                printf("v9 WMMA-dyn(%dx%d,BW=%d,%zuKB) : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1, %.2fx vs v4-ref)\n", BM2, BN2, BW2, shmem9 / 1024, ms9, 2.0 * M * N * K / (ms9 * 1e-3) / 1e12, ms / ms9, ms6 / ms9);
+                free(gpu9);
+            }
         }
         free(refrs); free(gpu6);
     }
