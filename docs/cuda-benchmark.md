@@ -203,27 +203,31 @@ Still outstanding for enterprise readiness: that perf pass; wiring regime-3 into
 prefill batching; the one-time re-anchor of published digests; robustness across shapes/quant mixes;
 and bit-identity CI across GPU archs.
 
-### Perf-pass findings so far (both bit-identical, neither fast)
+### Perf pass: kernel progression (all bit-identical on a T4)
 
-Two kernel structures, both validated bit-identical (0 diffs, M=4096 N=256) on a T4:
+| kernel | int8-TOPS (M=4096 N=256) | vs v1 | note |
+|---|---|---|---|
+| v1 — one warp per 16×16 WMMA tile | 0.6 | 1.0× | good occupancy, re-reads weights once per token-tile |
+| v2 — one warp per 16 rows (weight-reuse) | 0.3 | 0.4× | weights read once, but 256 warps → occupancy collapses |
+| v3 — multi-warp block, shared weight staging | 0.9 | ~1.4× | best WMMA; epilogue-bound (VWARPS=4 > 8 > 16 → not weight-bound) |
+| **v4 — register-tiled `__dp4a` (running-sum)** | **2.1–2.4** | **3.3–4.3×** | no `store_matrix_sync`; scales + combine in registers |
 
-| kernel | int8-TOPS | note |
-|---|---|---|
-| v1 — one warp per 16×16 tile | 0.6 | good occupancy (4096 warps), but re-reads weights once per token-tile |
-| v2 — one warp per 16 rows, weight-reuse across all N | 0.3 | weights read once total, but only 256 warps → occupancy collapses |
+Lessons, each measured:
+- Weight-reuse / occupancy / tensor-core-feeding **trade off** — v2 proved reuse alone loses to occupancy; v3
+  proved WMMA stays **epilogue-bound** (~1 TOPS) because the per-sub-block `store_matrix_sync`→shared→scale
+  between tiny mma pairs dominates.
+- The WMMA accumulator fragment layout is **opaque/arch-specific**, so applying the per-row sub-block scale
+  in-fragment (to skip the store) would re-introduce an arch dependence and threaten cross-GPU bit-identity.
+- **`__dp4a` register-tiling wins** (v4): the per-sub-block integer scale and the cross-super-block combine both
+  live in registers, so there is no `store_matrix_sync` and no parts storage. To make the combine
+  register-cheap, **regime-3 defines the cross-super-block combine as a fixed-order running sum** (still a fixed
+  order → deterministic/bit-identical; the reference is `ref_dot_rs`). Validated bit-identical up to
+  M=8192 N=2048 (0 / 16,777,216 diffs), reaching ~2.4 TOPS (~4× v1) and scaling with batch.
 
-The lesson: weight-reuse, occupancy, and tensor-core feeding **trade off against each other** and must be
-co-optimized — the fast design is a *multi-warp block* (one block owns 16 rows × a wide N, warps split N
-and share one shared-memory weight staging, per-warp register accumulators, double-buffered loads). That is
-the real MMQ kernel and a dedicated multi-day optimization, not an incremental tweak. Correctness/bit-identity
-is solved; production throughput is the remaining engineering.
-
-A portability caveat found along the way: applying the per-sub-block *per-row* integer scale efficiently wants
-direct access to the WMMA accumulator fragment, whose element→(row,col) layout is **opaque/arch-specific**.
-Relying on it would re-introduce an arch dependence and threaten the cross-GPU bit-identity that is the whole
-point. The portable route (`store_matrix_sync` to shared, scale there) is what these kernels use — and it is
-part of why the epilogue is expensive. A `__dp4a`-based tiled MMQ (no opaque fragment; scales applied in
-registers) is the more determinism-aligned production path, at a lower peak than WMMA but no portability risk.
+v4 is the production architecture. It is ~7% of the T4 `__dp4a` ceiling — standard GEMM tuning (double-buffered
+shared loads, wider micro-tiles, bank-conflict-free staging) has clear headroom, and on Ada/Hopper an int8 IMMA
+tensor-core variant lifts the ceiling further — but the design (register-tiled integer, running-sum combine) is
+settled and bit-identical.
 
 ## Program to "enterprise-ready" regime-3 (sequenced)
 

@@ -62,6 +62,95 @@ static float ref_dot(const unsigned char* wrow, const float* dx, const signed ch
     return ftree(parts, nsuper);
 }
 
+// ---- regime-3 combine variant: fixed-order running sum (deterministic, no parts storage) ----
+// A register-tiled kernel can't cheaply hold nsuper parts per output for a fixed tree, so
+// regime-3 defines the cross-super-block combine as a left-to-right running sum (still a
+// fixed order → deterministic/bit-identical). This reference matches the v4 dp4a kernel.
+static float ref_dot_rs(const unsigned char* wrow, const float* dx, const signed char* xq, const int* bs, int nsuper) {
+    float sum = 0.0f;
+    for (int s = 0; s < nsuper; s++) {
+        const unsigned char* blk = wrow + s * 144; float d = f16f(blk[0] | (blk[1] << 8)), dmin = f16f(blk[2] | (blk[3] << 8));
+        const unsigned char* sc = blk + 4; const unsigned char* qs = blk + 16;
+        const signed char* x = xq + s * 256; const int* b = bs + s * 8;
+        int acc = 0, accm = 0;
+        for (int half = 0; half < 4; half++) {
+            unsigned s1, m1, s2, m2; gsm(half * 2, sc, &s1, &m1); gsm(half * 2 + 1, sc, &s2, &m2);
+            int qoff = half * 32, base = half * 64, slo = 0, shi = 0;
+            for (int l = 0; l < 32; l++) { slo += (int)(qs[qoff + l] & 0x0F) * (int)x[base + l]; shi += (int)(qs[qoff + l] >> 4) * (int)x[base + 32 + l]; }
+            acc += (int)s1 * slo + (int)s2 * shi; accm += (int)m1 * b[half * 2] + (int)m2 * b[half * 2 + 1];
+        }
+        float a1 = d * dx[s], a2 = dmin * dx[s]; sum = sum + (a1 * (float)acc - a2 * (float)accm);  // running sum
+    }
+    return sum;
+}
+
+// ---- v4: register-tiled dp4a. Block computes a 64x64 output tile; each thread owns a 4x4
+// micro-tile with INTEGER accumulators + the running float sum in REGISTERS (no store_matrix_sync,
+// no parts in global). Weights/activations for one super-block are staged (unpacked) in shared and
+// reused across the tile. Scales applied in registers. Bit-identical to ref_dot_rs. ----
+#define TBM 64
+#define TBN 64
+__global__ void __launch_bounds__(256) q4k_dp4a_v4(
+        const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+        float* out, unsigned M, unsigned N, unsigned nsuper) {
+    unsigned tm = blockIdx.x * TBM, tn = blockIdx.y * TBN;
+    unsigned tid = threadIdx.x;                       // 0..255
+    unsigned trow = tid >> 4, tcol = tid & 15u;       // 16x16 thread grid; each owns 4x4
+    __shared__ signed char wsh[TBM][256];             // unpacked weight nibbles (int8)
+    __shared__ signed char xsh[TBN][256];             // activation int8
+    __shared__ unsigned char scsh[TBM][8], msh[TBM][8];
+    __shared__ float dxsh[TBN];
+    __shared__ int bsh[TBN][8];
+
+    float outr[4][4]; for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) outr[a][b] = 0.0f;
+    float drow[4], dmrow[4];                          // per-owned-row d, dmin (reloaded per super-block)
+
+    for (unsigned s = 0u; s < nsuper; s++) {
+        // stage weights (unpack nibbles) : TBM*256 values, 256 threads
+        for (unsigned i = tid; i < TBM * 256u; i += 256u) {
+            unsigned r = i >> 8, e = i & 255u, wr = tm + r;
+            const unsigned char* qs = W + (size_t)wr * nsuper * 144u + s * 144u + 16u;
+            unsigned half = e >> 6, within = e & 63u, lo = within < 32u, l = within & 31u;
+            unsigned q = qs[half * 32u + l];
+            wsh[r][e] = (signed char)(lo ? (q & 0x0Fu) : (q >> 4));
+        }
+        // stage activations: TBN*256, and dx/bsums; and per-row scales
+        for (unsigned i = tid; i < TBN * 256u; i += 256u) { unsigned c = i >> 8, e = i & 255u, tc = tn + c; xsh[c][e] = xq[((size_t)tc * nsuper + s) * 256u + e]; }
+        for (unsigned i = tid; i < TBM * 8u; i += 256u) { unsigned r = i >> 3, sub = i & 7u, wr = tm + r; const unsigned char* scb = W + (size_t)wr * nsuper * 144u + s * 144u + 4u; unsigned sv, mv; gsm(sub, scb, &sv, &mv); scsh[r][sub] = (unsigned char)sv; msh[r][sub] = (unsigned char)mv; }
+        for (unsigned i = tid; i < TBN; i += 256u) { unsigned tc = tn + i; dxsh[i] = dx[(size_t)tc * nsuper + s]; for (int g = 0; g < 8; g++) bsh[i][g] = bsums[((size_t)tc * nsuper + s) * 8u + g]; }
+        // per-owned-row d, dmin
+        for (int a = 0; a < 4; a++) { unsigned wr = tm + trow * 4u + a; const unsigned char* blk = W + (size_t)wr * nsuper * 144u + s * 144u; drow[a] = f16f(blk[0] | (blk[1] << 8)); dmrow[a] = f16f(blk[2] | (blk[3] << 8)); }
+        __syncthreads();
+        // compute: each thread owns rows trow*4..+4, cols tcol*4..+4
+        int acc[4][4], accm[4][4]; for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) { acc[a][b] = 0; accm[a][b] = 0; }
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned half = sub >> 1, hi = sub & 1u, base = half * 64u + hi * 32u;
+            for (int a = 0; a < 4; a++) {
+                unsigned r = trow * 4u + a; int sc = scsh[r][sub], mm = msh[r][sub];
+                for (int b = 0; b < 4; b++) {
+                    unsigned c = tcol * 4u + b; int sj = 0;
+                    const signed char* wp = &wsh[r][base]; const signed char* xp = &xsh[c][base];
+                    for (int k = 0; k < 32; k += 4) {
+                        int wv = *(const int*)(wp + k), xv = *(const int*)(xp + k);
+                        sj = __dp4a(wv, xv, sj);
+                    }
+                    acc[a][b] += sc * sj; accm[a][b] += mm * bsh[c][sub];
+                }
+            }
+        }
+        for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) {
+            unsigned c = tcol * 4u + b; float dxv = dxsh[c];
+            float a1 = drow[a] * dxv, a2 = dmrow[a] * dxv;
+            outr[a][b] = outr[a][b] + (a1 * (float)acc[a][b] - a2 * (float)accm[a][b]);   // running sum
+        }
+        __syncthreads();
+    }
+    for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) {
+        unsigned wr = tm + trow * 4u + a, tc = tn + tcol * 4u + b;
+        if (wr < M && tc < N) out[(size_t)wr * N + tc] = outr[a][b];
+    }
+}
+
 // ---- WMMA kernel: one warp per 16x16 output tile ----
 __global__ void q4k_imma(const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
                          float* out, unsigned M, unsigned N, unsigned nsuper) {
@@ -215,6 +304,69 @@ __global__ void q4k_imma_p1(const unsigned char* W, const float* dx, const signe
         __syncwarp();
     }
 }
+// ---- v3: co-optimized multi-warp block. One block = VWARPS warps owns 16 weight-rows ×
+// (VWARPS*16) token-columns; all warps SHARE one shared-memory weight staging (weights read
+// once per col-group, not per tile), each warp drives its own N-tile's WMMA + epilogue, and
+// the grid keeps thousands of warps live (occupancy). Writes per-super-block parts to global;
+// q4k_combine does the fixed tree. Bit-identical to v1/v2. ----
+#ifndef VWARPS
+#define VWARPS 8
+#endif
+__global__ void __launch_bounds__(VWARPS * 32) q4k_imma_v3(
+        const unsigned char* W, const float* dx, const signed char* xq, const int* bsums,
+        float* parts, unsigned M, unsigned N, unsigned nsuper) {
+    unsigned tm = blockIdx.x; if (tm * 16u >= M) return;
+    unsigned warp = threadIdx.x >> 5, lane = threadIdx.x & 31u;
+    unsigned nt = blockIdx.y * VWARPS + warp;            // this warp's token-tile
+    bool active = (nt * 16u < N);
+    extern __shared__ unsigned char smem[];
+    signed char* na = (signed char*)smem;                        // [16][32] shared weights
+    unsigned* scrow = (unsigned*)(na + 16 * 32);                 // [16]
+    unsigned* mrow = scrow + 16;                                 // [16]
+    signed char* nbuf = (signed char*)(mrow + 16);               // [VWARPS][16][32]
+    int* sjt = (int*)(nbuf + VWARPS * 16 * 32);                  // [VWARPS][256]
+    int* acc = sjt + VWARPS * 256;                               // [VWARPS][256]
+    int* accm = acc + VWARPS * 256;                              // [VWARPS][256]
+    signed char* mynb = nbuf + warp * 512; int* mysj = sjt + warp * 256; int* myacc = acc + warp * 256; int* myam = accm + warp * 256;
+
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, signed char, wmma::row_major> fa;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, signed char, wmma::col_major> fb;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, int> fc;
+
+    for (unsigned s = 0u; s < nsuper; s++) {
+        for (unsigned i = lane; i < 256u; i += 32u) { myacc[i] = 0; myam[i] = 0; }
+        for (unsigned sub = 0u; sub < 8u; sub++) {
+            unsigned half = sub >> 1, hi = sub & 1u, qoff = half * 32u, base = half * 64u + hi * 32u;
+            for (unsigned i = threadIdx.x; i < 16u * 32u; i += blockDim.x) {   // block-cooperative weight stage (ONCE/colgroup)
+                unsigned r = i >> 5, l = i & 31u; const unsigned char* qs = W + (size_t)(tm * 16u + r) * nsuper * 144u + s * 144u + 16u;
+                unsigned q = qs[qoff + l]; na[i] = (signed char)(hi ? (q >> 4) : (q & 0x0Fu));
+            }
+            if (threadIdx.x < 16u) { const unsigned char* scb = W + (size_t)(tm * 16u + threadIdx.x) * nsuper * 144u + s * 144u + 4u; gsm(sub, scb, &scrow[threadIdx.x], &mrow[threadIdx.x]); }
+            __syncthreads();
+            if (active) {
+                for (unsigned i = lane; i < 16u * 32u; i += 32u) { unsigned c = i >> 5, l = i & 31u, tc = nt * 16u + c; mynb[c * 32u + l] = xq[((size_t)tc * nsuper + s) * 256u + base + l]; }
+                __syncwarp();
+                wmma::fill_fragment(fc, 0);
+                wmma::load_matrix_sync(fa, na, 32); wmma::load_matrix_sync(fb, mynb, 32); wmma::mma_sync(fc, fa, fb, fc);
+                wmma::load_matrix_sync(fa, na + 16, 32); wmma::load_matrix_sync(fb, mynb + 16, 32); wmma::mma_sync(fc, fa, fb, fc);
+                wmma::store_matrix_sync(mysj, fc, 16, wmma::mem_row_major);
+                __syncwarp();
+                for (unsigned i = lane; i < 256u; i += 32u) { unsigned r = i >> 4, c = i & 15u, tc = nt * 16u + c; myacc[i] += (int)scrow[r] * mysj[i]; myam[i] += (int)mrow[r] * bsums[((size_t)tc * nsuper + s) * 8u + sub]; }
+            }
+            __syncthreads();                                   // all warps done with na before next sub restages it
+        }
+        if (active) {
+            for (unsigned i = lane; i < 256u; i += 32u) {
+                unsigned r = i >> 4, c = i & 15u, wr = tm * 16u + r, tc = nt * 16u + c;
+                const unsigned char* blk = W + (size_t)wr * nsuper * 144u + s * 144u;
+                float d = f16f(blk[0] | (blk[1] << 8)), dmin = f16f(blk[2] | (blk[3] << 8)), dxv = dx[(size_t)tc * nsuper + s];
+                float a1 = d * dxv, a2 = dmin * dxv;
+                parts[((size_t)wr * N + tc) * nsuper + s] = a1 * (float)myacc[i] - a2 * (float)myam[i];
+            }
+        }
+        __syncthreads();
+    }
+}
 __global__ void q4k_combine(const float* parts, float* out, unsigned M, unsigned N, unsigned nsuper) {
     unsigned idx = blockIdx.x * blockDim.x + threadIdx.x; if (idx >= M * N) return;
     float tmp[256];
@@ -287,5 +439,41 @@ int main(int argc, char** argv) {
     cudaEventRecord(s0); for (int it = 0; it < iters; it++) { q4k_imma_p1<<<M / 16, 32, sh2>>>(dW, ddx, dqs, dbs, dparts, M, N, nsuper); q4k_combine<<<((size_t)M * N + 127) / 128, 128>>>(dparts, dout, M, N, nsuper); }
     cudaEventRecord(e0); cudaEventSynchronize(e0); float ms2 = 0; cudaEventElapsedTime(&ms2, s0, e0); ms2 /= iters;
     printf("v2 two-pass    : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1)\n", ms2, 2.0 * M * N * K / (ms2 * 1e-3) / 1e12, ms / ms2);
+
+    // ---- v3: multi-warp block (shared weight staging + occupancy) ----
+    if (N % (VWARPS * 16) == 0) {
+        size_t sh3 = 16 * 32 + 16 * 4 + 16 * 4 + VWARPS * (16 * 32 + 256 * 4 * 3);
+        cudaFuncSetAttribute(q4k_imma_v3, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)sh3);
+        dim3 grid3(M / 16, N / (VWARPS * 16)); dim3 blk3(VWARPS * 32);
+        q4k_imma_v3<<<grid3, blk3, sh3>>>(dW, ddx, dqs, dbs, dparts, M, N, nsuper);
+        q4k_combine<<<((size_t)M * N + 127) / 128, 128>>>(dparts, dout, M, N, nsuper);
+        cudaError_t e3 = cudaDeviceSynchronize();
+        if (e3 != cudaSuccess) { printf("v3 launch error: %s (sh3=%zu)\n", cudaGetErrorString(e3), sh3); return 1; }
+        float* gpu3 = (float*)malloc((size_t)M * N * 4); cudaMemcpy(gpu3, dout, (size_t)M * N * 4, cudaMemcpyDeviceToHost);
+        size_t d3 = 0, f3 = (size_t)-1; for (size_t i = 0; i < (size_t)M * N; i++) { unsigned a, b; memcpy(&a, &ref[i], 4); memcpy(&b, &gpu3[i], 4); if (a != b) { if (f3 == (size_t)-1) f3 = i; d3++; } }
+        printf("v3 multiwarp bit-identity: %zu/%d diffs%s", d3, M * N, d3 ? "" : "  -> BIT-IDENTICAL\n");
+        if (d3) printf("   first @ %zu ref=%g gpu=%g\n", f3, ref[f3], gpu3[f3]);
+        cudaEventRecord(s0); for (int it = 0; it < iters; it++) { q4k_imma_v3<<<grid3, blk3, sh3>>>(dW, ddx, dqs, dbs, dparts, M, N, nsuper); q4k_combine<<<((size_t)M * N + 127) / 128, 128>>>(dparts, dout, M, N, nsuper); }
+        cudaEventRecord(e0); cudaEventSynchronize(e0); float ms3 = 0; cudaEventElapsedTime(&ms3, s0, e0); ms3 /= iters;
+        printf("v3 multiwarp(VWARPS=%d) : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1)\n", VWARPS, ms3, 2.0 * M * N * K / (ms3 * 1e-3) / 1e12, ms / ms3);
+    }
+
+    // ---- v4: register-tiled dp4a (running-sum regime) ----
+    if (M % TBM == 0 && N % TBN == 0) {
+        float* refrs = (float*)malloc((size_t)M * N * 4);
+        for (int m = 0; m < M; m++) for (int n = 0; n < N; n++)
+            refrs[(size_t)m * N + n] = ref_dot_rs(hW + (size_t)m * nsuper * 144, dxh + (size_t)n * nsuper, qsh + (size_t)n * nsuper * 256, bsh + (size_t)n * nsuper * 8, nsuper);
+        dim3 grid4(M / TBM, N / TBN); dim3 blk4(256);
+        q4k_dp4a_v4<<<grid4, blk4>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+        cudaError_t e4 = cudaDeviceSynchronize();
+        if (e4 != cudaSuccess) { printf("v4 launch error: %s\n", cudaGetErrorString(e4)); return 1; }
+        float* gpu4 = (float*)malloc((size_t)M * N * 4); cudaMemcpy(gpu4, dout, (size_t)M * N * 4, cudaMemcpyDeviceToHost);
+        size_t d4 = 0, f4 = (size_t)-1; for (size_t i = 0; i < (size_t)M * N; i++) { unsigned a, b; memcpy(&a, &refrs[i], 4); memcpy(&b, &gpu4[i], 4); if (a != b) { if (f4 == (size_t)-1) f4 = i; d4++; } }
+        printf("v4 dp4a bit-identity (vs running-sum ref): %zu/%d diffs%s", d4, M * N, d4 ? "" : "  -> BIT-IDENTICAL\n");
+        if (d4) printf("   first @ %zu refrs=%g gpu=%g\n", f4, refrs[f4], gpu4[f4]);
+        cudaEventRecord(s0); for (int it = 0; it < iters; it++) q4k_dp4a_v4<<<grid4, blk4>>>(dW, ddx, dqs, dbs, dout, M, N, nsuper);
+        cudaEventRecord(e0); cudaEventSynchronize(e0); float ms4 = 0; cudaEventElapsedTime(&ms4, s0, e0); ms4 /= iters;
+        printf("v4 dp4a-tiled  : %.3f ms  %.1f int8-TOPS   (%.2fx vs v1)\n", ms4, 2.0 * M * N * K / (ms4 * 1e-3) / 1e12, ms / ms4);
+    }
     return 0;
 }
