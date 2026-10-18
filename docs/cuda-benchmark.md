@@ -183,12 +183,25 @@ dot — on the same identical result. (The WMMA kernel here is naive, ~6% of the
 peak; a tiled kernel goes several× further.) So "deterministic **and** fast" is real via integer +
 tensor cores — a property float tensor cores cannot provide.
 
-### What a production Q4_K-IMMA linear still needs
+### Q4_K-IMMA kernel: correct (bit-identical), not yet perf-optimized
 
-The feasibility is proven; the kernel is MMQ-class engineering: on-the-fly 4-bit→int8 unpack into
-shared-memory tiles (pre-unpacking would double VRAM — a 32B would not fit 24 GB), a per-sub-block
-integer-scale epilogue matching `dot_q4k_q8_block`, prefill/batch along N (tensor cores win on
-GEMM, not single-token GEMV), the regime-3 re-anchor, and bit-identity CI across GPU archs.
+`kernels/q4k_imma_test.cu` is a full Q4_K linear on int8 tensor cores: on-the-fly 4-bit→int8
+unpack into shared tiles, WMMA (16×16×16) for the sub-block dots, a per-sub-block integer-scale
+epilogue matching `dot_q4k_q8_block`, and the fixed-tree combine across super-blocks. Batched over
+N tokens (prefill). Validated **bit-identical to the integer reference** on a T4: `0/1,048,576`
+diffs (M=4096, N=256). The determinism flags `--fmad=false -ftz=false -ffp-contract=off` are
+required (the integer dot is exact regardless, but the float epilogue must not contract).
+
+Status: **correct, not fast.** It measures ~0.6 effective int8-TOPS vs the 7.8 a plain int8 IMMA
+GEMM reaches, because the per-sub-block scale epilogue (160 sub-blocks/tile, each a WMMA
+store→shared→scale→sync) dwarfs the tiny per-sub-block tensor-core work. Making it fast is a real
+MMQ-style optimization pass (register-tiled integer accumulation, larger-N weight reuse, fewer
+syncs, double-buffering) that is **not yet done** — the kernel here proves correctness/bit-identity,
+not production throughput.
+
+Still outstanding for enterprise readiness: that perf pass; wiring regime-3 into the forward with
+prefill batching; the one-time re-anchor of published digests; robustness across shapes/quant mixes;
+and bit-identity CI across GPU archs.
 
 ## Caveats (stated plainly)
 
