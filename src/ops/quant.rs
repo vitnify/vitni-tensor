@@ -1034,6 +1034,80 @@ pub fn linear_q4_k_integer(
     Ok(())
 }
 
+/// regime-3 combine: fixed-order left-to-right running sum over super-blocks (deterministic),
+/// instead of regime-2's `fixed_tree`. A running sum needs one accumulator, not all `n_super`
+/// partials, which is what lets a register-tiled GPU kernel (the dp4a MMQ) stay fast AND
+/// bit-identical. This is the regime-3 Q4_K linear; it matches the GPU v4 kernel exactly.
+/// (Regime-2 — the shipped, certified regime — keeps `linear_q4_k_integer`/`fixed_tree`.)
+pub fn linear_q4_k_integer_rs(
+    x: &[f32],
+    w_q4k: &[u8],
+    y_out: &mut [f32],
+    batch: usize,
+    in_feat: usize,
+    out_feat: usize,
+) -> Result<()> {
+    if in_feat % Q4_K_BLOCK_NUMEL != 0 {
+        return Err(Error::Internal("linear_q4_k_integer_rs: in_feat not a multiple of 256"));
+    }
+    let row_bytes = (in_feat / Q4_K_BLOCK_NUMEL) * Q4_K_BLOCK_BYTES;
+    if w_q4k.len() < out_feat * row_bytes {
+        return Err(Error::Internal("linear_q4_k_integer_rs: weight shape mismatch"));
+    }
+    let n_super = in_feat / Q4_K_BLOCK_NUMEL;
+    for b in 0..batch {
+        let x_row = &x[b * in_feat..(b + 1) * in_feat];
+        let xq: alloc::vec::Vec<Q8Block> = (0..n_super)
+            .map(|s| quantize_block_q8(&x_row[s * Q4_K_BLOCK_NUMEL..(s + 1) * Q4_K_BLOCK_NUMEL]))
+            .collect();
+        for o in 0..out_feat {
+            let w_row = &w_q4k[o * row_bytes..(o + 1) * row_bytes];
+            let mut sum = 0.0f32; // running sum, fixed order s = 0..n_super
+            for s in 0..n_super {
+                let off = s * Q4_K_BLOCK_BYTES;
+                sum += dot_q4k_q8_block(&w_row[off..off + Q4_K_BLOCK_BYTES], &xq[s], Q4_K_BLOCK_NUMEL);
+            }
+            y_out[b * out_feat + o] = sum;
+        }
+    }
+    Ok(())
+}
+
+/// regime-3 Q6_K linear: integer dot + running-sum combine (see `linear_q4_k_integer_rs`).
+pub fn linear_q6_k_integer_rs(
+    x: &[f32],
+    w_q6k: &[u8],
+    y_out: &mut [f32],
+    batch: usize,
+    in_feat: usize,
+    out_feat: usize,
+) -> Result<()> {
+    if in_feat % Q6_K_BLOCK_NUMEL != 0 {
+        return Err(Error::Internal("linear_q6_k_integer_rs: in_feat not a multiple of 256"));
+    }
+    let row_bytes = (in_feat / Q6_K_BLOCK_NUMEL) * Q6_K_BLOCK_BYTES;
+    if w_q6k.len() < out_feat * row_bytes {
+        return Err(Error::Internal("linear_q6_k_integer_rs: weight shape mismatch"));
+    }
+    let n_super = in_feat / Q6_K_BLOCK_NUMEL;
+    for b in 0..batch {
+        let x_row = &x[b * in_feat..(b + 1) * in_feat];
+        let xq: alloc::vec::Vec<Q8Block> = (0..n_super)
+            .map(|s| quantize_block_q8(&x_row[s * Q6_K_BLOCK_NUMEL..(s + 1) * Q6_K_BLOCK_NUMEL]))
+            .collect();
+        for o in 0..out_feat {
+            let w_row = &w_q6k[o * row_bytes..(o + 1) * row_bytes];
+            let mut sum = 0.0f32;
+            for s in 0..n_super {
+                let off = s * Q6_K_BLOCK_BYTES;
+                sum += dot_q6k_q8_block(&w_row[off..off + Q6_K_BLOCK_BYTES], &xq[s], Q6_K_BLOCK_NUMEL);
+            }
+            y_out[b * out_feat + o] = sum;
+        }
+    }
+    Ok(())
+}
+
 /// Integer dot of one Q6_K weight super-block against int8 activations.
 ///
 /// Simpler than Q4_K: Q6_K has no `dmin` term, so
@@ -1929,6 +2003,35 @@ mod tests {
             "fused linear_q4_k != dequant+matmul: ref={} fused={}",
             y_ref[0], y_fused[0]
         );
+    }
+
+    /// regime-3 combine spec: the integer linear with a running-sum combine must be
+    /// deterministic AND a genuinely different reduction from regime-2's `fixed_tree`
+    /// (so the regimes are distinguishable, as the issuer's NUMERIC_REGIME_CHECK requires).
+    /// This is the combine the GPU dp4a MMQ kernel (v4) matches bit-for-bit.
+    #[test]
+    fn regime3_running_sum_is_deterministic_and_distinct() {
+        let nsuper = 4usize; // 1024-wide: running-sum order differs from the fixed tree
+        let in_feat = nsuper * 256;
+        let out_feat = 3usize;
+        let mut w = alloc::vec![0u8; out_feat * nsuper * Q4_K_BLOCK_BYTES];
+        for bi in 0..out_feat * nsuper {
+            let b = &mut w[bi * Q4_K_BLOCK_BYTES..(bi + 1) * Q4_K_BLOCK_BYTES];
+            b[0..2].copy_from_slice(&f32_to_f16(0.05 + 0.01 * ((bi % 3) as f32)).to_le_bytes());
+            b[2..4].copy_from_slice(&f32_to_f16(0.02).to_le_bytes());
+            for j in 0..12 { b[4 + j] = (3 + bi as u8 + j as u8) & 0x3F; }
+            for i in 0..128 { b[16 + i] = ((bi as u8 + i as u8) & 0x0F) | ((((bi as u8) * 2 + i as u8) & 0x0F) << 4); }
+        }
+        let x: alloc::vec::Vec<f32> = (0..in_feat).map(|i| ((i as f32) * 0.6180339887).fract() - 0.5).collect();
+
+        let mut rs1 = alloc::vec![0f32; out_feat]; linear_q4_k_integer_rs(&x, &w, &mut rs1, 1, in_feat, out_feat).unwrap();
+        let mut rs2 = alloc::vec![0f32; out_feat]; linear_q4_k_integer_rs(&x, &w, &mut rs2, 1, in_feat, out_feat).unwrap();
+        let bits = |v: &[f32]| v.iter().map(|f| f.to_bits()).collect::<alloc::vec::Vec<_>>();
+        assert_eq!(bits(&rs1), bits(&rs2), "regime-3 running sum is not deterministic");
+
+        let mut ft = alloc::vec![0f32; out_feat]; linear_q4_k_integer(&x, &w, &mut ft, 1, in_feat, out_feat).unwrap();
+        assert!((0..out_feat).any(|o| rs1[o].to_bits() != ft[o].to_bits()),
+            "regime-3 running sum coincided with regime-2 fixed_tree — combines are not distinct");
     }
 
     // ===============================================================
