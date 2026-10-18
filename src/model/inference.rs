@@ -384,12 +384,109 @@ where
     Ok((Outcome { generated_tokens: generated, cert }, cert_id))
 }
 
+/// Like `run_quantized_with_forward`, but the prompt is processed as a BATCH (prefill) in a
+/// single `prefill` call instead of token-by-token, then generation proceeds per token via
+/// `decode`. `prefill(prompt_tokens)` must prime the KV cache for positions `0..P-1` and
+/// return the logits at the LAST prompt position; `decode(token, pos)` returns the logits for
+/// `token` at `pos`. The certificate is byte-identical to the per-token path whenever the
+/// batched prefill primes the cache and the last-position logits bit-identically — batching is
+/// a pure throughput optimization (tensor cores / dp4a GEMM win at N>1), transparent to the cert.
+pub fn run_quantized_with_prefill<S, PF, DF>(
+    cfg: &Config,
+    weights_blob_hash: &[u8; 32],
+    req: &Request,
+    sink: &mut S,
+    tier: u8,
+    mut prefill: PF,
+    mut decode: DF,
+) -> core::result::Result<(Outcome, u64), RunError<S::Error>>
+where
+    S: CertSink,
+    PF: FnMut(&[u32]) -> crate::error::Result<Tensor>,
+    DF: FnMut(u32, usize) -> crate::error::Result<Tensor>,
+{
+    let mut builder = CertBuilder::new();
+    builder.declare_input("model_id", req.model_id.as_bytes());
+    builder.declare_input("weights_hash", weights_blob_hash);
+    let arch_str = arch_string(cfg);
+    let arch_hash = *::blake3::hash(arch_str.as_bytes()).as_bytes();
+    builder.declare_input("arch_hash", &arch_hash);
+    let prompt_bytes = u32_slice_to_le_bytes(req.prompt_tokens);
+    builder.declare_input("prompt_tokens", &prompt_bytes);
+    let n_new_bytes = (req.n_new_tokens as u32).to_le_bytes();
+    builder.declare_input("n_new_tokens", &n_new_bytes);
+
+    let prompt_len = req.prompt_tokens.len();
+    if prompt_len == 0 {
+        return Err(RunError::Inference(crate::error::Error::InvalidShape("prompt_tokens must not be empty")));
+    }
+    if prompt_len + req.n_new_tokens > cfg.seq_len {
+        return Err(RunError::Inference(crate::error::Error::InvalidShape("prompt + n_new_tokens exceeds seq_len")));
+    }
+
+    // Batched prefill: primes cache for 0..P-1, returns logits at pos P-1. Its argmax is the
+    // position-P input token (fed, not recorded); the n_new recorded tokens come from decode,
+    // so generated[i] = argmax(logits@(prompt_len+i)) — exactly matching the per-token loop.
+    let last_prompt = prefill(req.prompt_tokens).map_err(RunError::Inference)?;
+    let mut cur = argmax_u32(&last_prompt.argmax_last_dim().map_err(RunError::Inference)?);
+    let mut generated: Vec<u32> = Vec::with_capacity(req.n_new_tokens);
+    for i in 0..req.n_new_tokens {
+        let logits = decode(cur, prompt_len + i).map_err(RunError::Inference)?;
+        let picked = argmax_u32(&logits.argmax_last_dim().map_err(RunError::Inference)?);
+        generated.push(picked);
+        cur = picked;
+    }
+
+    let output_bytes = u32_slice_to_le_bytes(&generated);
+    let output_hash = *::blake3::hash(&output_bytes).as_bytes();
+    builder.declare_output("output_tokens", &output_bytes);
+    builder.declare_output("output_tokens_hash", &output_hash);
+    let (cert, cert_id) = builder.finalize_with_sink(sink, tier).map_err(RunError::Sink)?;
+    Ok((Outcome { generated_tokens: generated, cert }, cert_id))
+}
+
 #[cfg(test)]
 mod regime3_tests {
-    use super::{run_quantized, run_quantized_regime3, Request};
+    use super::{run_quantized, run_quantized_regime3, run_quantized_with_prefill, Request};
     use crate::model::config::Config;
+    use crate::model::forward::RunState;
+    use crate::model::forward_quantized;
     use crate::model::gguf::GgufFile;
     use crate::model::quant_weights::QuantizedWeights;
+
+    /// The prefill driver (prompt processed as a batch) yields a certificate byte-identical to
+    /// the per-token path. Here `prefill` is a simple loop over the SAME RunState — proving the
+    /// driver itself is cert-transparent; a real batched GPU prefill plugs into the same seam.
+    #[test]
+    #[ignore = "needs a Q4_K model; set VITNI_GGUF"]
+    fn prefill_driver_matches_per_token() {
+        let path = std::env::var("VITNI_GGUF").expect("set VITNI_GGUF");
+        let blob = std::fs::read(&path).expect("read gguf");
+        let hash = *blake3::hash(&blob).as_bytes();
+        let gguf = GgufFile::parse(&blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let w = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        let prompt: std::vec::Vec<u32> = std::vec![1, 9038, 2501, 263, 931, 29892, 14332, 2983];
+        let req = Request { model_id: "prefill-check", prompt_tokens: &prompt, n_new_tokens: 8 };
+
+        let per_token = run_quantized(&cfg, &w, &hash, &req).unwrap();
+
+        let state = core::cell::RefCell::new(RunState::new(&cfg));
+        let (batched, _) = run_quantized_with_prefill(
+            &cfg, &hash, &req, &mut crate::cert::NullSink, 0,
+            |prompt| {
+                let mut st = state.borrow_mut();
+                let mut last = forward_quantized::step(&cfg, &w, &mut st, prompt[0], 0)?;
+                for pos in 1..prompt.len() { last = forward_quantized::step(&cfg, &w, &mut st, prompt[pos], pos)?; }
+                Ok(last)
+            },
+            |tok, pos| forward_quantized::step(&cfg, &w, &mut state.borrow_mut(), tok, pos),
+        ).unwrap();
+
+        assert_eq!(per_token.generated_tokens, batched.generated_tokens, "prefill-driver tokens != per-token");
+        assert_eq!(per_token.cert.digest, batched.cert.digest, "prefill-driver cert != per-token cert");
+        std::eprintln!("PASS: prefill driver cert == per-token cert, bit-for-bit");
+    }
 
     /// End-to-end forward integration: the regime-3 forward RUNS, is deterministic, and
     /// produces a DIFFERENT certificate than regime-2 (because the k-quant linears use the
