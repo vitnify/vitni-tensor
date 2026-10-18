@@ -585,6 +585,30 @@ mod tests {
         assert!(batched < pertok, "batched prefill not faster than per-token");
     }
 
+    /// Timing-only prefill (no CPU reference — usable on 7B where the CPU regime-3 forward is
+    /// minutes/token). Measures batched vs per-token prefill; the Q4_K GEMM kernel is picked at
+    /// runtime by VITNI_Q4K_DP4A (set = dp4a, unset = wide WMMA), so running this twice shows how
+    /// much of the prefill the GEMM is — the WMMA-vs-dp4a gap grows with model size.
+    #[test]
+    #[ignore = "needs a Q4_K model + NVIDIA GPU; set VITNI_GGUF_7B"]
+    fn prefill_speed_only() {
+        use std::time::Instant;
+        let path = std::env::var("VITNI_GGUF_7B").expect("set VITNI_GGUF_7B");
+        let file = std::fs::File::open(&path).expect("open gguf");
+        let mmap = unsafe { memmap2::Mmap::map(&file).expect("mmap gguf") };
+        let blob: &[u8] = &mmap;
+        let gguf = GgufFile::parse(blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let w = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        eprintln!("device: {}  dim={} hidden={} layers={}  Q4K_DP4A={}", device_name(), cfg.dim, cfg.hidden_dim, cfg.n_layers, std::env::var("VITNI_Q4K_DP4A").is_ok());
+        let prompt: Vec<u32> = (0..64u32).map(|i| 1 + (i * 97) % 2000).collect();
+        let mut cf = CudaForward::new_regime(&cfg, &w, 3).unwrap();
+        let reps = 5;
+        let t0 = Instant::now(); for _ in 0..reps { cf.reset(); let _ = cf.prefill(&prompt); } let batched = t0.elapsed().as_secs_f64() / reps as f64;
+        let t1 = Instant::now(); for _ in 0..reps { cf.reset(); for (pos, &t) in prompt.iter().enumerate() { let _ = cf.step(t, pos); } } let pertok = t1.elapsed().as_secs_f64() / reps as f64;
+        eprintln!("prefill {} tokens: per-token {:.3}s  batched {:.3}s  -> {:.2}x faster", prompt.len(), pertok, batched, pertok / batched.max(1e-9));
+    }
+
     /// Batched prefill Q4_K GEMM: bit-identical to the engine's regime-3 linear (per token) AND
     /// fast (weights staged once, reused across the token batch). N = prefill width.
     #[test]

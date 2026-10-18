@@ -458,6 +458,55 @@ __global__ void k_add_bias(float* v, const float* b, unsigned n) {
     v[i] = v[i] + b[i];
 }
 
+// Batched QKV bias over P rows of length `rowlen` (v is [rows][rowlen]); bit-identical to P
+// per-row k_add_bias calls (same add, b reused per row).
+__global__ void k_add_bias_batch(float* v, const float* b, unsigned rowlen, unsigned rows) {
+    unsigned i = blockIdx.x * blockDim.x + threadIdx.x; if (i >= rows * rowlen) return;
+    v[i] = v[i] + b[i % rowlen];
+}
+
+// Batched attention over all P prompt positions. One thread per (position p, head h); each does the
+// EXACT same causal computation as k_attention with pos=p (keys/values 0..p), so the result is
+// bit-identical to the P per-position k_attention launches — only the host `for p` loop is removed.
+__global__ void k_attention_batch(const float* q, const float* kc, const float* vc, float* xbout,
+                                  unsigned n_heads, unsigned head_size, unsigned kv_dim, unsigned kv_mul, unsigned P) {
+    unsigned gid = blockIdx.x * blockDim.x + threadIdx.x; if (gid >= P * n_heads) return;
+    unsigned pos = gid / n_heads, h = gid % n_heads;
+    const float* qp = q + (size_t)pos * n_heads * head_size;
+    float* op = xbout + (size_t)pos * n_heads * head_size;
+    float scores[4096];
+    unsigned qoff = h * head_size, kvhead = h / kv_mul; float sqrt_hs = sqrtf((float)head_size);
+    unsigned tlen = pos + 1u;
+    for (unsigned t = 0u; t < tlen; t++) {
+        unsigned koff = t * kv_dim + kvhead * head_size;
+        float lanes[8]; for (int j = 0; j < 8; j++) lanes[j] = 0.0f;
+        unsigned full = head_size - (head_size % 8u), dd = 0u;
+        for (; dd < full; dd += 8u) for (unsigned j = 0u; j < 8u; j++) { float p = qp[qoff + dd + j] * kc[koff + dd + j]; lanes[j] += p; }
+        for (; dd < head_size; dd++) { unsigned j = dd % 8u; float p = qp[qoff + dd] * kc[koff + dd]; lanes[j] += p; }
+        float l[8]; for (int j = 0; j < 8; j++) l[j] = lanes[j];
+        scores[t] = div_sw(fixed_tree(l, 8u), sqrt_hs);
+    }
+    float mx = -INFINITY; for (unsigned t = 0u; t < tlen; t++) { if (scores[t] > mx) mx = scores[t]; }
+    for (unsigned t = 0u; t < tlen; t++) scores[t] = vt_expf(scores[t] - mx);
+    {
+        float lanes[8]; for (int j = 0; j < 8; j++) lanes[j] = 0.0f;
+        unsigned full = tlen - (tlen % 8u), t = 0u;
+        for (; t < full; t += 8u) for (unsigned j = 0u; j < 8u; j++) lanes[j] += scores[t + j];
+        for (; t < tlen; t++) lanes[t % 8u] += scores[t];
+        float l[8]; for (int j = 0; j < 8; j++) l[j] = lanes[j];
+        float inv = div_sw(1.0f, fixed_tree(l, 8u));
+        for (unsigned k = 0u; k < tlen; k++) scores[k] = scores[k] * inv;
+    }
+    for (unsigned dd = 0u; dd < head_size; dd++) {
+        float lanes[8]; for (int j = 0; j < 8; j++) lanes[j] = 0.0f;
+        unsigned full = tlen - (tlen % 8u), t = 0u;
+        for (; t < full; t += 8u) for (unsigned j = 0u; j < 8u; j++) { unsigned voff = (t + j) * kv_dim + kvhead * head_size; float p = scores[t + j] * vc[voff + dd]; lanes[j] += p; }
+        for (; t < tlen; t++) { unsigned voff = t * kv_dim + kvhead * head_size; float p = scores[t] * vc[voff + dd]; lanes[t % 8u] += p; }
+        float l[8]; for (int j = 0; j < 8; j++) l[j] = lanes[j];
+        op[qoff + dd] = fixed_tree(l, 8u);
+    }
+}
+
 // ====================================================================
 // TIER-2 EXPERIMENT (regime-3): integer-activation Q4_K linear.
 // Quantize x to int8 per 256-block (bsums per 32-group), then the per-block dot
@@ -987,13 +1036,83 @@ __global__ void k_q6k_rs_gemm_simple(const float* dx, const signed char* qs, con
     size_t o = (size_t)n * M + m; out[o] = acc ? (out[o] + sum) : sum;
 }
 
-// One batched regime-3 linear: quantize in[P][K] -> q8, then GEMM -> out[P][M] (token-major).
-static inline void pg(const float* in, unsigned in_dim, const unsigned char* w, int is_q6k,
+// Tiled Q6_K GEMM (regime-3), weight-reuse via dp4a — the Q6_K analogue of k_q4k_rs_gemm. A PBM×PBN
+// block stages the unpacked Q6_K weights (6-bit value - 32, as int8) + 16 int8 scales + d_w once per
+// super-block and reuses them across the token tile. Q6_K sub-block j = positions [16j,16j+16),
+// scale scb[j], no min/bsum term. Bit-identical to q6k_q8_part's running sum (== engine
+// linear_q6_k_integer_rs). out[N][M] token-major, acc residual.
+__global__ void __launch_bounds__(256) k_q6k_rs_gemm(const float* dx, const signed char* qs, const unsigned char* w,
+                                                     float* out, unsigned M, unsigned N, unsigned ns, int acc) {
+    unsigned tm = blockIdx.x * PBM, tn = blockIdx.y * PBN, tid = threadIdx.x, trow = tid >> 4, tcol = tid & 15u;
+    __shared__ signed char wsh[PBM][256];      // unpacked Q6_K weight (value - 32)
+    __shared__ signed char xsh[PBN][256];      // q8 activations
+    __shared__ signed char scsh[PBM][16];      // 16 int8 scales per super-block
+    __shared__ float dwsh[PBM], dxsh[PBN];
+    float outr[4][4]; for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) outr[a][b] = 0.0f;
+    for (unsigned s = 0u; s < ns; s++) {
+        for (unsigned i = tid; i < PBM * 256u; i += 256u) {
+            unsigned r = i >> 8, e = i & 255u, wr = tm + r; if (wr >= M) { wsh[r][e] = 0; continue; }
+            const unsigned char* blk = w + (size_t)wr * ns * 210u + s * 210u;
+            const unsigned char* ql = blk; const unsigned char* qh = blk + 128u;
+            unsigned hb = e >> 7, rem = e & 127u, g = rem >> 5, l = rem & 31u;
+            unsigned b0 = ql[hb * 64u + l], b1 = ql[hb * 64u + l + 32u], hh = qh[hb * 32u + l];
+            int v;
+            if (g == 0u) v = (int)((b0 & 0x0Fu) | ((hh & 0x03u) << 4));
+            else if (g == 1u) v = (int)((b1 & 0x0Fu) | (((hh >> 2) & 0x03u) << 4));
+            else if (g == 2u) v = (int)((b0 >> 4) | (((hh >> 4) & 0x03u) << 4));
+            else v = (int)((b1 >> 4) | (((hh >> 6) & 0x03u) << 4));
+            wsh[r][e] = (signed char)(v - 32);
+        }
+        for (unsigned i = tid; i < PBN * 256u; i += 256u) { unsigned c = i >> 8, e = i & 255u, tc = tn + c; xsh[c][e] = (tc < N) ? qs[((size_t)tc * ns + s) * 256u + e] : 0; }
+        for (unsigned i = tid; i < PBM * 16u; i += 256u) { unsigned r = i >> 4, j = i & 15u, wr = tm + r; scsh[r][j] = (wr < M) ? (signed char)(w[(size_t)wr * ns * 210u + s * 210u + 192u + j]) : 0; }
+        for (unsigned i = tid; i < PBM; i += 256u) { unsigned wr = tm + i; if (wr < M) { const unsigned char* blk = w + (size_t)wr * ns * 210u + s * 210u; dwsh[i] = f16_to_f32((unsigned)blk[208] | ((unsigned)blk[209] << 8)); } else dwsh[i] = 0.0f; }
+        for (unsigned i = tid; i < PBN; i += 256u) { unsigned tc = tn + i; dxsh[i] = (tc < N) ? dx[(size_t)tc * ns + s] : 0.0f; }
+        __syncthreads();
+        for (int a = 0; a < 4; a++) {
+            unsigned r = trow * 4u + a;
+            for (int b = 0; b < 4; b++) {
+                unsigned c = tcol * 4u + b; int acc_i = 0;
+                for (unsigned j = 0u; j < 16u; j++) {
+                    unsigned base = j * 16u; int sj = 0;
+                    const signed char* wp = &wsh[r][base]; const signed char* xp = &xsh[c][base];
+                    for (int k = 0; k < 16; k += 4) sj = __dp4a(*(const int*)(wp + k), *(const int*)(xp + k), sj);
+                    acc_i += (int)scsh[r][j] * sj;
+                }
+                outr[a][b] += dwsh[r] * dxsh[c] * (float)acc_i;   // running sum over super-blocks
+            }
+        }
+        __syncthreads();
+    }
+    for (int a = 0; a < 4; a++) for (int b = 0; b < 4; b++) {
+        unsigned wr = tm + trow * 4u + a, tc = tn + tcol * 4u + b;
+        if (wr < M && tc < N) { size_t o = (size_t)tc * M + wr; out[o] = acc ? (out[o] + outr[a][b]) : outr[a][b]; }
+    }
+}
+
+// One batched prefill linear: out[P][M] token-major. `kind` is the weight dtype (0=Q4_K, 1=Q6_K,
+// 2=Q8_0, 3=Q5_0) — the SAME value lin() dispatches on (the handle's q6k_* fields hold the full
+// kind, not a bool). Q4_K/Q6_K use the batched integer GEMMs; Q8_0/Q5_0 (e.g. the output head on
+// small models) have no batched GEMM, so they loop the per-token float kernels — bit-identical to
+// the per-token lin() path. (The earlier `is_q6k` truthiness bug routed Q8_0/Q5_0 to the Q6_K
+// kernel, corrupting any model with a non-Q4_K/Q6_K linear, e.g. Qwen.)
+static inline void pg(const float* in, unsigned in_dim, const unsigned char* w, int kind,
                       float* out, unsigned out_dim, unsigned P, int acc,
                       float* q8dx, signed char* q8qs, int* q8bsums) {
     unsigned ns = in_dim / 256u;
+    if (kind == 2 || kind == 3) {   // Q8_0 / Q5_0: float dequant-dot, per token (regime-independent)
+        dim3 g((out_dim + 63u) / 64u), b(64);
+        for (unsigned n = 0u; n < P; n++) {
+            const float* xin = in + (size_t)n * in_dim; float* xo = out + (size_t)n * out_dim;
+            if (kind == 2) { if (acc) k_q8_0_acc<<<g, b>>>(xin, w, xo, in_dim, out_dim); else k_q8_0<<<g, b>>>(xin, w, xo, in_dim, out_dim); }
+            else           { if (acc) k_q5_0_acc<<<g, b>>>(xin, w, xo, in_dim, out_dim); else k_q5_0<<<g, b>>>(xin, w, xo, in_dim, out_dim); }
+        }
+        return;
+    }
     k_q8_quant_batch<<<((size_t)P * ns + 127) / 128, 128>>>(in, q8dx, q8qs, q8bsums, P, in_dim, ns);
-    if (is_q6k) k_q6k_rs_gemm_simple<<<((size_t)out_dim * P + 127) / 128, 128>>>(q8dx, q8qs, w, out, out_dim, P, ns, acc);
+    if (kind == 1) {
+        if (getenv("VITNI_Q6K_SIMPLE")) k_q6k_rs_gemm_simple<<<((size_t)out_dim * P + 127) / 128, 128>>>(q8dx, q8qs, w, out, out_dim, P, ns, acc);
+        else { dim3 grid((out_dim + PBM - 1) / PBM, (P + PBN - 1) / PBN); k_q6k_rs_gemm<<<grid, 256>>>(q8dx, q8qs, w, out, out_dim, P, ns, acc); }
+    }
     else if (getenv("VITNI_Q4K_DP4A")) { dim3 grid((out_dim + PBM - 1) / PBM, (P + PBN - 1) / PBN); k_q4k_rs_gemm<<<grid, 256>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
     else { dim3 grid((out_dim + QKM - 1) / QKM, (P + QKN - 1) / QKN); k_q4k_rs_gemm_wmma<<<grid, QKW * 32>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
 }
@@ -1013,7 +1132,7 @@ extern "C" int vt_cuda_prefill(VtCuda* h, const float* x_embed, unsigned P, cons
     float *dX = dev_zeros((size_t)P * dim, &err), *dXb = dev_zeros((size_t)P * dim, &err);
     float *dQ = dev_zeros((size_t)P * qo, &err), *dAtt = dev_zeros((size_t)P * qo, &err);
     float *dGate = dev_zeros((size_t)P * hidden, &err), *dUp = dev_zeros((size_t)P * hidden, &err), *dInner = dev_zeros((size_t)P * hidden, &err);
-    float *dLog = dev_zeros((size_t)P * vocab, &err);
+    float *dLog = dev_zeros((size_t)vocab, &err);   // prefill needs only the LAST position's logits
     float *dCos = dev_floats(cosc, (size_t)P * hs2, &err), *dSin = dev_floats(sinc, (size_t)P * hs2, &err);
     float *q8dx = dev_zeros((size_t)P * maxns, &err); signed char *q8qs = nullptr; int *q8bs = nullptr;
     if (cudaMalloc(&q8qs, (size_t)P * maxns * 256) != cudaSuccess) err = 1;
@@ -1027,16 +1146,27 @@ extern "C" int vt_cuda_prefill(VtCuda* h, const float* x_embed, unsigned P, cons
         pg(dXb, dim, h->d_wq[l], h->q6k_wq[l], dQ, qo, P, 0, q8dx, q8qs, q8bs);
         pg(dXb, dim, h->d_wk[l], h->q6k_wk[l], kc, kv_dim, P, 0, q8dx, q8qs, q8bs);   // writes cache[0..P-1]
         pg(dXb, dim, h->d_wv[l], h->q6k_wv[l], vc, kv_dim, P, 0, q8dx, q8qs, q8bs);
-        for (unsigned p = 0u; p < P; p++) {
-            if (h->d_bq[l]) k_add_bias<<<(qo + 255) / 256, 256>>>(dQ + p * qo, h->d_bq[l], qo);
-            if (h->d_bk[l]) k_add_bias<<<(kv_dim + 255) / 256, 256>>>(kc + p * kv_dim, h->d_bk[l], kv_dim);
-            if (h->d_bv[l]) k_add_bias<<<(kv_dim + 255) / 256, 256>>>(vc + p * kv_dim, h->d_bv[l], kv_dim);
-            const float* cp = dCos + p * hs2; const float* sp = dSin + p * hs2;
-            if (c->rope_neox) { k_rope_neox<<<(n_heads + 63) / 64, 64>>>(dQ + p * qo, cp, sp, dQ + p * qo, 1, n_heads, hs); k_rope_neox<<<(n_kv + 63) / 64, 64>>>(kc + p * kv_dim, cp, sp, kc + p * kv_dim, 1, n_kv, hs); }
-            else { k_rope<<<(n_heads + 63) / 64, 64>>>(dQ + p * qo, cp, sp, dQ + p * qo, 1, n_heads, hs); k_rope<<<(n_kv + 63) / 64, 64>>>(kc + p * kv_dim, cp, sp, kc + p * kv_dim, 1, n_kv, hs); }
+        // Batched QKV bias + RoPE + attention over all P positions (one launch each instead of P).
+        // Bit-identical: each (position, head, element) does the same arithmetic as the per-position path.
+        if (getenv("VITNI_PREFILL_UNBATCHED")) {   // A/B reference: the old per-position loops
+            for (unsigned p = 0u; p < P; p++) {
+                if (h->d_bq[l]) k_add_bias<<<(qo + 255) / 256, 256>>>(dQ + p * qo, h->d_bq[l], qo);
+                if (h->d_bk[l]) k_add_bias<<<(kv_dim + 255) / 256, 256>>>(kc + p * kv_dim, h->d_bk[l], kv_dim);
+                if (h->d_bv[l]) k_add_bias<<<(kv_dim + 255) / 256, 256>>>(vc + p * kv_dim, h->d_bv[l], kv_dim);
+                const float* cp = dCos + p * hs2; const float* sp = dSin + p * hs2;
+                if (c->rope_neox) { k_rope_neox<<<(n_heads + 63) / 64, 64>>>(dQ + p * qo, cp, sp, dQ + p * qo, 1, n_heads, hs); k_rope_neox<<<(n_kv + 63) / 64, 64>>>(kc + p * kv_dim, cp, sp, kc + p * kv_dim, 1, n_kv, hs); }
+                else { k_rope<<<(n_heads + 63) / 64, 64>>>(dQ + p * qo, cp, sp, dQ + p * qo, 1, n_heads, hs); k_rope<<<(n_kv + 63) / 64, 64>>>(kc + p * kv_dim, cp, sp, kc + p * kv_dim, 1, n_kv, hs); }
+            }
+            for (unsigned p = 0u; p < P; p++)
+                k_attention<<<(n_heads + 63) / 64, 64>>>(dQ + p * qo, kc, vc, dAtt + p * qo, n_heads, hs, kv_dim, c->kv_mul, p);
+        } else {
+            if (h->d_bq[l]) k_add_bias_batch<<<((size_t)P * qo + 255) / 256, 256>>>(dQ, h->d_bq[l], qo, P);
+            if (h->d_bk[l]) k_add_bias_batch<<<((size_t)P * kv_dim + 255) / 256, 256>>>(kc, h->d_bk[l], kv_dim, P);
+            if (h->d_bv[l]) k_add_bias_batch<<<((size_t)P * kv_dim + 255) / 256, 256>>>(vc, h->d_bv[l], kv_dim, P);
+            if (c->rope_neox) { k_rope_neox<<<((size_t)P * n_heads + 63) / 64, 64>>>(dQ, dCos, dSin, dQ, P, n_heads, hs); k_rope_neox<<<((size_t)P * n_kv + 63) / 64, 64>>>(kc, dCos, dSin, kc, P, n_kv, hs); }
+            else { k_rope<<<((size_t)P * n_heads + 63) / 64, 64>>>(dQ, dCos, dSin, dQ, P, n_heads, hs); k_rope<<<((size_t)P * n_kv + 63) / 64, 64>>>(kc, dCos, dSin, kc, P, n_kv, hs); }
+            k_attention_batch<<<((size_t)P * n_heads + 63) / 64, 64>>>(dQ, kc, vc, dAtt, n_heads, hs, kv_dim, c->kv_mul, P);
         }
-        for (unsigned p = 0u; p < P; p++)
-            k_attention<<<(n_heads + 63) / 64, 64>>>(dQ + p * qo, kc, vc, dAtt + p * qo, n_heads, hs, kv_dim, c->kv_mul, p);
         pg(dAtt, qo, h->d_wo[l], h->q6k_wo[l], dX, dim, P, 1, q8dx, q8qs, q8bs);       // + residual
         k_rms<<<(P + 63) / 64, 64>>>(dX, h->d_rms_ffn[l], dXb, dim, P, c->rms_eps);
         pg(dXb, dim, h->d_w1[l], h->q6k_w1[l], dGate, hidden, P, 0, q8dx, q8qs, q8bs);
@@ -1045,10 +1175,13 @@ extern "C" int vt_cuda_prefill(VtCuda* h, const float* x_embed, unsigned P, cons
         pg(dInner, hidden, h->d_w2[l], h->q6k_w2[l], dX, dim, P, 1, q8dx, q8qs, q8bs); // + residual
     }
     k_rms<<<(P + 63) / 64, 64>>>(dX, h->d_rms_final, dXb, dim, P, c->rms_eps);
-    pg(dXb, dim, h->d_wcls, h->wcls_q6k, dLog, vocab, P, 0, q8dx, q8qs, q8bs);
+    // Output head for the LAST prompt position only: prefill returns logits@(P-1); positions 0..P-2
+    // logits are never read (the next token comes from the last position), so computing them is pure
+    // waste — and on large-vocab models (Qwen: 152064) that head dominated the whole prefill.
+    pg(dXb + (size_t)(P - 1) * dim, dim, h->d_wcls, h->wcls_q6k, dLog, vocab, 1, 0, q8dx, q8qs, q8bs);
     cudaError_t e = cudaDeviceSynchronize();
     if (e != cudaSuccess) { return (int)e; }
-    cudaMemcpy(out_last, dLog + (size_t)(P - 1) * vocab, (size_t)vocab * 4, cudaMemcpyDeviceToHost);
+    cudaMemcpy(out_last, dLog, (size_t)vocab * 4, cudaMemcpyDeviceToHost);
     cudaFree(dX); cudaFree(dXb); cudaFree(dQ); cudaFree(dAtt); cudaFree(dGate); cudaFree(dUp); cudaFree(dInner); cudaFree(dLog); cudaFree(dCos); cudaFree(dSin); cudaFree(q8dx); cudaFree(q8qs); cudaFree(q8bs);
     return 0;
 }

@@ -296,6 +296,47 @@ measured, plateaus. Double-buffered / `cp.async` staging and an `mma.sync m16n8k
 for this prefill; they belong to a GEMM-bound (large-model/large-batch) pass, and `mma.sync` could not be validated
 on sm_89/90 here (the L40S stayed capacity-blocked). The wide-WMMA kernel is forward-compatible across sm_75→90.
 
+### Prefill critical-path pass: batch the rest, and the WMMA win surfaces on large models
+
+The "~10%" finding above was a **TinyLlama artifact, not a general truth.** GEMM share of a forward scales with model
+size: per layer per token, linears ∝ `dim²` while attention ∝ `dim·seq`, so the ratio GEMM/attention ≈ `dim/seq`.
+On a small model the GEMM is small and other work dominates; on a large model (your 32B credit workload) the linears
+are the overwhelming majority, so the 2× Q4_K GEMM surfaces almost directly. Each optimization is itself
+model-agnostic (it speeds *its* op for any model); which op dominates is what's model-dependent. So the plan is to do
+all of them — each owns a regime. Three bit-identical structural fixes to the batched prefill (all validated on an
+A10G, certs unchanged):
+
+1. **Batch attention / RoPE / QKV-bias.** The prefill looped these `P` times (host-side launch overhead); RoPE
+   already had a `seq` param, attention/bias just needed the `p` loop folded into the grid. Same per-(position,head,
+   element) arithmetic → bit-identical. TinyLlama prefill 3.72× → **6.10×**.
+2. **Output head for the last position only.** Prefill computed the `[vocab][dim]` head for all `P` positions but only
+   position `P-1`'s logits are ever read — pure `P×` waste, worst on large-vocab models. Computing only the last
+   position is correctness-preserving (unused logits). TinyLlama 6.10× → **20.74×**; Qwen2.5-7B (vocab 152064) 1.16×
+   → **2.13×**.
+3. **Tile the Q6_K GEMM.** The Q6_K FFN-down ran on the non-tiled one-thread-per-output kernel (re-reads weights per
+   token). Q6_K sub-block `j` = positions `[16j,16j+16)`, scale `scb[j]`, no min term — structurally the Q4_K kernel
+   with 16 subs of 16, so `k_q6k_rs_gemm` tiles it with dp4a weight-reuse (bit-identical to `linear_q6_k_integer_rs`).
+   Qwen2.5-7B 2.13× → **20.64×** (it was ~90% of the batched time).
+
+**A real bug this surfaced:** the batched `pg()` treated the weight dtype as a boolean `is_q6k`, so Q8_0/Q5_0 tensors
+(e.g. Qwen's output head) were routed to the Q6_K kernel and silently corrupted — never caught because prefill had
+only been tested on pure-Q4_K/Q6_K models (Mistral/TinyLlama). The old *unbatched* loops reproduced the same wrong
+digest, confirming it pre-dated the batching. Fixed `pg()` to dispatch the real kind (Q8_0/Q5_0 loop the per-token
+float kernels). Qwen2.5-0.5B prefill cert now `[80,b1,dd,16]` == CPU regime-3.
+
+**The scaling confirmed (A10G, 64-token prefill, batched vs per-token; WMMA vs the dp4a fallback):**
+
+| model | dim / vocab | batched prefill | WMMA vs dp4a (e2e) |
+|---|---|---|---|
+| TinyLlama-1.1B | 2048 / 32000 | **22.9×** | 1.16× |
+| Qwen2.5-7B | 3584 / 152064 | **20.6×** | **1.67×** (0.306 s vs 0.512 s) |
+
+The WMMA-vs-dp4a gap **grows with model size** (1.16× → 1.67×): once the other work is batched/tiled away, the Q4_K
+linears are a large share on the bigger model, so the tensor-core GEMM's 2× surfaces end-to-end — the large-model
+(product) path. All of this is bit-identical: every change preserves the regime-3 cert (`A/B` toggles
+`VITNI_Q4K_DP4A`, `VITNI_Q6K_SIMPLE`, `VITNI_PREFILL_UNBATCHED` kept for measurement). Still open as GEMM-depth levers
+for GEMM-bound cases: double-buffer / `cp.async`, `mma.sync m16n8k32`; and decode (N=1) still uses the per-token path.
+
 ### The combine decision (regime-3 spec, GPU-critical)
 
 Integrating against the ENGINE's regime-3 surfaced a key correction: `linear_q4_k_integer` combines
