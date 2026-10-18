@@ -902,6 +902,85 @@ extern "C" int vt_cuda_test_linear_int(int K, int M, const float* x, const unsig
     return 0;
 }
 
+// Batched Q6_K GEMM (regime-3): simple one-thread-per-output (Q6_K linears — ffn_down, lm_head —
+// are the minority; weight-reuse tiling is the Q4_K kernel's job). out[N][M] token-major, running sum.
+__global__ void k_q6k_rs_gemm_simple(const float* dx, const signed char* qs, const unsigned char* w,
+                                     float* out, unsigned M, unsigned N, unsigned ns, int acc) {
+    unsigned idx = blockIdx.x * blockDim.x + threadIdx.x; if (idx >= M * N) return;
+    unsigned m = idx % M, n = idx / M;
+    const unsigned char* wrow = w + (size_t)m * ns * 210u;
+    const float* xdx = dx + (size_t)n * ns;
+    const signed char* xqs = qs + (size_t)n * ns * 256u;
+    float sum = 0.0f;
+    for (unsigned s = 0u; s < ns; s++) sum += q6k_q8_part(xdx, xqs, wrow + s * 210u, s);
+    size_t o = (size_t)n * M + m; out[o] = acc ? (out[o] + sum) : sum;
+}
+
+// One batched regime-3 linear: quantize in[P][K] -> q8, then GEMM -> out[P][M] (token-major).
+static inline void pg(const float* in, unsigned in_dim, const unsigned char* w, int is_q6k,
+                      float* out, unsigned out_dim, unsigned P, int acc,
+                      float* q8dx, signed char* q8qs, int* q8bsums) {
+    unsigned ns = in_dim / 256u;
+    k_q8_quant_batch<<<((size_t)P * ns + 127) / 128, 128>>>(in, q8dx, q8qs, q8bsums, P, in_dim, ns);
+    if (is_q6k) k_q6k_rs_gemm_simple<<<((size_t)out_dim * P + 127) / 128, 128>>>(q8dx, q8qs, w, out, out_dim, P, ns, acc);
+    else { dim3 grid((out_dim + PBM - 1) / PBM, (P + PBN - 1) / PBN); k_q4k_rs_gemm<<<grid, 256>>>(w, q8dx, q8qs, q8bsums, out, out_dim, P, ns, acc); }
+}
+
+// Batched prefill forward (regime-3): processes P prompt tokens together — linears as batched
+// GEMMs (weights staged once, reused across the batch), rms/silu batched, attention+rope looped
+// per position (causal). Primes the KV cache (h->d_keyc/d_valc) for 0..P-1 so decode continues via
+// vt_cuda_step. Returns logits at the LAST prompt position. x_embed[P*dim] and cos/sin[P*hs/2] are
+// host-computed (embeddings dequantized, rope caches). Bit-identical to the per-token regime-3 path.
+extern "C" int vt_cuda_prefill(VtCuda* h, const float* x_embed, unsigned P, const float* cosc, const float* sinc, float* out_last) {
+    VtCfg* c = &h->cfg;
+    unsigned dim = c->dim, kv_dim = c->kv_dim, hidden = c->hidden, hs = c->head_size, n_heads = c->n_heads, vocab = c->vocab, qo = h->q_out;
+    unsigned hs2 = hs / 2u, n_kv = kv_dim / hs;
+    unsigned maxfeat = dim; if ((unsigned)qo > maxfeat) maxfeat = qo; if (hidden > maxfeat) maxfeat = hidden;
+    unsigned maxns = (maxfeat + 255u) / 256u;
+    int err = 0;
+    float *dX = dev_zeros((size_t)P * dim, &err), *dXb = dev_zeros((size_t)P * dim, &err);
+    float *dQ = dev_zeros((size_t)P * qo, &err), *dAtt = dev_zeros((size_t)P * qo, &err);
+    float *dGate = dev_zeros((size_t)P * hidden, &err), *dUp = dev_zeros((size_t)P * hidden, &err), *dInner = dev_zeros((size_t)P * hidden, &err);
+    float *dLog = dev_zeros((size_t)P * vocab, &err);
+    float *dCos = dev_floats(cosc, (size_t)P * hs2, &err), *dSin = dev_floats(sinc, (size_t)P * hs2, &err);
+    float *q8dx = dev_zeros((size_t)P * maxns, &err); signed char *q8qs = nullptr; int *q8bs = nullptr;
+    if (cudaMalloc(&q8qs, (size_t)P * maxns * 256) != cudaSuccess) err = 1;
+    if (cudaMalloc(&q8bs, (size_t)P * maxns * 8 * 4) != cudaSuccess) err = 1;
+    if (err) return -1;
+    cudaMemcpy(dX, x_embed, (size_t)P * dim * 4, cudaMemcpyHostToDevice);
+
+    for (int l = 0; l < c->n_layers; l++) {
+        float* kc = h->d_keyc[l]; float* vc = h->d_valc[l];
+        k_rms<<<(P + 63) / 64, 64>>>(dX, h->d_rms_att[l], dXb, dim, P, c->rms_eps);
+        pg(dXb, dim, h->d_wq[l], h->q6k_wq[l], dQ, qo, P, 0, q8dx, q8qs, q8bs);
+        pg(dXb, dim, h->d_wk[l], h->q6k_wk[l], kc, kv_dim, P, 0, q8dx, q8qs, q8bs);   // writes cache[0..P-1]
+        pg(dXb, dim, h->d_wv[l], h->q6k_wv[l], vc, kv_dim, P, 0, q8dx, q8qs, q8bs);
+        for (unsigned p = 0u; p < P; p++) {
+            if (h->d_bq[l]) k_add_bias<<<(qo + 255) / 256, 256>>>(dQ + p * qo, h->d_bq[l], qo);
+            if (h->d_bk[l]) k_add_bias<<<(kv_dim + 255) / 256, 256>>>(kc + p * kv_dim, h->d_bk[l], kv_dim);
+            if (h->d_bv[l]) k_add_bias<<<(kv_dim + 255) / 256, 256>>>(vc + p * kv_dim, h->d_bv[l], kv_dim);
+            const float* cp = dCos + p * hs2; const float* sp = dSin + p * hs2;
+            if (c->rope_neox) { k_rope_neox<<<(n_heads + 63) / 64, 64>>>(dQ + p * qo, cp, sp, dQ + p * qo, 1, n_heads, hs); k_rope_neox<<<(n_kv + 63) / 64, 64>>>(kc + p * kv_dim, cp, sp, kc + p * kv_dim, 1, n_kv, hs); }
+            else { k_rope<<<(n_heads + 63) / 64, 64>>>(dQ + p * qo, cp, sp, dQ + p * qo, 1, n_heads, hs); k_rope<<<(n_kv + 63) / 64, 64>>>(kc + p * kv_dim, cp, sp, kc + p * kv_dim, 1, n_kv, hs); }
+        }
+        for (unsigned p = 0u; p < P; p++)
+            k_attention<<<(n_heads + 63) / 64, 64>>>(dQ + p * qo, kc, vc, dAtt + p * qo, n_heads, hs, kv_dim, c->kv_mul, p);
+        pg(dAtt, qo, h->d_wo[l], h->q6k_wo[l], dX, dim, P, 1, q8dx, q8qs, q8bs);       // + residual
+        k_rms<<<(P + 63) / 64, 64>>>(dX, h->d_rms_ffn[l], dXb, dim, P, c->rms_eps);
+        pg(dXb, dim, h->d_w1[l], h->q6k_w1[l], dGate, hidden, P, 0, q8dx, q8qs, q8bs);
+        pg(dXb, dim, h->d_w3[l], h->q6k_w3[l], dUp, hidden, P, 0, q8dx, q8qs, q8bs);
+        k_silu_mul<<<((size_t)P * hidden + 255) / 256, 256>>>(dGate, dUp, dInner, P * hidden);
+        pg(dInner, hidden, h->d_w2[l], h->q6k_w2[l], dX, dim, P, 1, q8dx, q8qs, q8bs); // + residual
+    }
+    k_rms<<<(P + 63) / 64, 64>>>(dX, h->d_rms_final, dXb, dim, P, c->rms_eps);
+    pg(dXb, dim, h->d_wcls, h->wcls_q6k, dLog, vocab, P, 0, q8dx, q8qs, q8bs);
+    cudaError_t e = cudaDeviceSynchronize();
+    if (e != cudaSuccess) { return (int)e; }
+    cudaMemcpy(out_last, dLog + (size_t)(P - 1) * vocab, (size_t)vocab * 4, cudaMemcpyDeviceToHost);
+    cudaFree(dX); cudaFree(dXb); cudaFree(dQ); cudaFree(dAtt); cudaFree(dGate); cudaFree(dUp); cudaFree(dInner); cudaFree(dLog); cudaFree(dCos); cudaFree(dSin); cudaFree(q8dx); cudaFree(q8qs); cudaFree(q8bs);
+    return 0;
+}
+
 // Batched prefill Q4_K linear test: out[N][M] (token-major) = W[M,K] . x[N,K], regime-3.
 extern "C" int vt_cuda_test_prefill_q4k(int K, int M, int N, const float* x, const unsigned char* w, size_t wlen, float* out, int iters) {
     int ns = K / 256; int err = 0;

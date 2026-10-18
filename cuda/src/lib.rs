@@ -61,6 +61,7 @@ extern "C" {
     fn vt_cuda_finalize(h: *mut VtCuda) -> c_int;
     fn vt_cuda_reset(h: *mut VtCuda);
     fn vt_cuda_step(h: *mut VtCuda, x_embed: *const f32, pos: c_uint, cosc: *const f32, sinc: *const f32, out_logits: *mut f32) -> c_int;
+    fn vt_cuda_prefill(h: *mut VtCuda, x_embed: *const f32, p: c_uint, cosc: *const f32, sinc: *const f32, out_last: *mut f32) -> c_int;
     fn vt_cuda_device_name() -> *const c_char;
     fn vt_cuda_test_linear(kind: c_int, k: c_int, m: c_int, x: *const f32, w: *const u8, wlen: usize, out: *mut f32, iters: c_int) -> c_int;
     fn vt_cuda_test_linear_int(k: c_int, m: c_int, x: *const f32, w: *const u8, wlen: usize, out: *mut f32, mode: c_int, iters: c_int) -> c_int;
@@ -264,6 +265,33 @@ impl<'w> CudaForward<'w> {
         unsafe { vt_cuda_reset(self.h) };
     }
 
+    /// Batched prefill: process all `tokens` of the prompt together (linears as GEMMs), priming
+    /// the KV cache for positions 0..P-1, and return the logits at the LAST prompt position.
+    /// Embeddings and per-position RoPE caches are computed on the host (same libm as the CPU).
+    pub fn prefill(&mut self, tokens: &[u32]) -> Vec<f32> {
+        let p = tokens.len();
+        let dim = self.dim;
+        let hs2 = self.head_size / 2;
+        let mut xemb: Vec<f32> = Vec::with_capacity(p * dim);
+        for &t in tokens {
+            xemb.extend_from_slice(&self.embed_row(t as usize).expect("embedding lookup"));
+        }
+        let mut cos = vec![0.0f32; p * hs2];
+        let mut sin = vec![0.0f32; p * hs2];
+        for pos in 0..p {
+            for j in 0..hs2 {
+                let freq = 1.0f32 / libm::powf(self.rope_theta, (2 * j) as f32 / self.head_size as f32);
+                let val = pos as f32 * freq;
+                cos[pos * hs2 + j] = libm::cosf(val);
+                sin[pos * hs2 + j] = libm::sinf(val);
+            }
+        }
+        let mut out = vec![0.0f32; self.vocab];
+        let rc = unsafe { vt_cuda_prefill(self.h, xemb.as_ptr(), p as c_uint, cos.as_ptr(), sin.as_ptr(), out.as_mut_ptr()) };
+        if rc != 0 { panic!("vt_cuda_prefill failed: CUDA error {rc}"); }
+        out
+    }
+
     /// RoPE cos/sin for `pos`, computed with the same `libm` as the CPU engine.
     fn rope_cache(&mut self, pos: usize) {
         let half = self.head_size / 2;
@@ -321,6 +349,30 @@ pub fn run_cuda_regime3(
 ) -> Result<Outcome, CudaError> {
     let mut cf = CudaForward::new_regime(cfg, weights, 3)?;
     run_cuda_with(&mut cf, cfg, weights_hash, req)
+}
+
+/// Regime-3 with BATCHED PREFILL: the prompt is processed as one batched GEMM forward (the
+/// speedup), then decode proceeds per token — both via the regime-3 kernels. Certificate must
+/// equal run_quantized_regime3 / run_cuda_regime3 (batching is transparent).
+pub fn run_cuda_regime3_prefill(
+    cfg: &Config,
+    weights: &QuantizedWeights,
+    weights_hash: &[u8; 32],
+    req: &Request,
+) -> Result<Outcome, CudaError> {
+    let cf = core::cell::RefCell::new(CudaForward::new_regime(cfg, weights, 3)?);
+    cf.borrow_mut().reset();
+    let vocab = cf.borrow().vocab;
+    let (outcome, _id) = inference::run_quantized_with_prefill(
+        cfg, weights_hash, req, &mut NullSink, 0,
+        |prompt| Tensor::from_f32(cf.borrow_mut().prefill(prompt), Shape::new(&[vocab])?),
+        |cur, pos| Tensor::from_f32(cf.borrow_mut().step(cur, pos), Shape::new(&[vocab])?),
+    )
+    .map_err(|e| match e {
+        RunError::Inference(err) => CudaError::Engine(err),
+        RunError::Sink(_) => unreachable!("NullSink is infallible"),
+    })?;
+    Ok(outcome)
 }
 
 // (run_cuda_with below is generic over the forward's borrow.)
@@ -497,6 +549,40 @@ mod tests {
         assert_eq!(bit(&gpu_dp4a, &cpu), m, "GPU __dp4a != CPU");
         assert_eq!(bit(&gpu_warp, &cpu), m, "GPU warp integer != CPU");
         assert_eq!(bit(&gpu_wdp4a, &cpu), m, "GPU warp+dp4a != CPU");
+    }
+
+    /// Increment (c) end-to-end: the batched-prefill regime-3 forward issues a certificate
+    /// identical to the per-token CPU regime-3 reference, AND prefill is faster than per-token.
+    #[test]
+    #[ignore = "needs a Q4_K model + NVIDIA GPU; set VITNI_GGUF_7B"]
+    fn prefill_regime3_matches_and_speedup() {
+        use std::time::Instant;
+        let path = std::env::var("VITNI_GGUF_7B").expect("set VITNI_GGUF_7B");
+        let file = std::fs::File::open(&path).expect("open gguf");
+        let mmap = unsafe { memmap2::Mmap::map(&file).expect("mmap gguf") };
+        let blob: &[u8] = &mmap;
+        let hash = *blake3::hash(blob).as_bytes();
+        let gguf = GgufFile::parse(blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let w = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        eprintln!("device: {}", device_name());
+        // a 64-token prompt (deterministic) so batching has something to batch
+        let prompt: Vec<u32> = (0..64u32).map(|i| 1 + (i * 97) % 2000).collect();
+        let req = Request { model_id: "pf", prompt_tokens: &prompt, n_new_tokens: 8 };
+
+        let cpu = inference::run_quantized_regime3(&cfg, &w, &hash, &req).unwrap();
+        let gpu = run_cuda_regime3_prefill(&cfg, &w, &hash, &req).unwrap();
+        eprintln!("cpu r3 {:02x?}  gpu r3+prefill {:02x?}", &cpu.cert.digest[..4], &gpu.cert.digest[..4]);
+        assert_eq!(cpu.generated_tokens, gpu.generated_tokens, "batched-prefill tokens != CPU regime-3");
+        assert_eq!(cpu.cert.digest, gpu.cert.digest, "batched-prefill cert != CPU regime-3 cert");
+
+        // speedup: batched prefill vs per-token prefill (same P tokens, regime-3)
+        let mut cf = CudaForward::new_regime(&cfg, &w, 3).unwrap();
+        let reps = 5;
+        let t0 = Instant::now(); for _ in 0..reps { cf.reset(); let _ = cf.prefill(&prompt); } let batched = t0.elapsed().as_secs_f64() / reps as f64;
+        let t1 = Instant::now(); for _ in 0..reps { cf.reset(); for (pos, &t) in prompt.iter().enumerate() { let _ = cf.step(t, pos); } } let pertok = t1.elapsed().as_secs_f64() / reps as f64;
+        eprintln!("prefill {} tokens: per-token {:.3}s  batched {:.3}s  -> {:.2}x faster", prompt.len(), pertok, batched, pertok / batched.max(1e-9));
+        assert!(batched < pertok, "batched prefill not faster than per-token");
     }
 
     /// Batched prefill Q4_K GEMM: bit-identical to the engine's regime-3 linear (per token) AND
