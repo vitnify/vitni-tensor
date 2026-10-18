@@ -112,17 +112,11 @@ There are two distinct "taxes"; keep them separate:
    puts deterministic Metal at ~8.6× off native Metal on TinyLlama; the NVIDIA native
    baseline is future work.
 
-The GPU kernels here are **correctness-first**: one thread per output row, a fixed reduction
-order (that fixed order is what makes them bit-identical). They are unoptimized, and the 1.34
-tok/s reflects the kernel design, not an inherent cost of determinism. The evidence is
-utilization: at 1.34 tok/s on a 32B Q4_K_M (~20 GB read per token) the engine moves ~27 GB/s,
-about **4–5% of the A10G's ~600 GB/s** memory bandwidth — the GPU sits ~95% idle, so the
-naive one-thread-per-row mapping is the bottleneck, not the fixed reduction. The determinism
-contract constrains only the *order* of the reduction, which can still be computed
-cooperatively (the same fixed tree across a warp), so bit-identity survives optimization.
-Tiling the matmul and parallelizing each row's reduction should therefore recover a large
-part of this gap — but **that work is not done here and no optimized throughput is claimed or
-measured**. This run was about integrity, not speed.
+The 32B numbers above use the **correctness-first** kernels: one thread per output row, a
+fixed reduction order (that fixed order is what makes them bit-identical). The 1.34 tok/s
+reflects the kernel design, not an inherent cost of determinism — at 1.34 tok/s on a 32B
+Q4_K_M (~20 GB/token) the engine moves ~27 GB/s, **~4–5% of the A10G's ~600 GB/s** bandwidth,
+so the GPU sat ~95% idle. See **Optimizing throughput** below for the measured path from here.
 
 ## A real bug the 32B run caught
 
@@ -133,6 +127,68 @@ produced **zero logits**. Root cause: `q6k_row` held per-super-block partials in
 after layer 0, localized by an L1-norm bisection). Models with `hidden < ~16 K` (Mistral-7B:
 56; Qwen2.5-0.5B: 19) never hit it. Fixed by sizing `parts[256]` (covers hidden up to 65536,
 i.e. 70B/405B-class). This latent bug would have shipped silently without a large-model test.
+
+## Optimizing throughput (measured)
+
+The ~95%-idle GPU is a kernel-design problem, not a determinism problem. Two levers, measured:
+
+### Tier 1 — faster at the *same* digest (ship-safe, no re-anchor)
+
+Keep the exact float canonical reduction (so every receipt is unchanged) but stop wasting the
+GPU. Implemented and validated bit-identical:
+
+- **Q6_K quantize-once**: the activation is identical across a linear's output rows, so quantize
+  it once per matmul instead of per row (the lm_head previously re-quantized `x` ~150k times).
+- **Q4_K warp-cooperative**: 8 threads per output row (one per reduction lane), each summing its
+  lane in order, combined through the *same* fixed tree via shared memory — coalesced reads,
+  8× row parallelism, identical arithmetic.
+
+Measured on Mistral-7B (T4), **bit-identical to CPU — the receipts are byte-for-byte unchanged**:
+
+| | before | Tier-1 |
+|---|---|---|
+| engine throughput | 2.9 tok/s | **5.46 tok/s** (~1.9×) |
+| latency / decision | 37.7 s | **20.0 s** |
+
+The ceiling here is structural: the canonical reduction is **8 lanes** by spec, so a single row
+parallelizes at most 8-way (× the number of 8192-element chunks). Going materially faster at the
+float spec would mean widening the reduction, which changes the digest.
+
+### Tier 2 — the strategic path: integer accumulation + int8 tensor cores (new regime)
+
+Floating-point addition isn't associative, which is the *entire* reason the order is fixed and
+parallelism is capped. **Integer addition is associative and exact.** If the reduction
+accumulates in integer/fixed-point (as the Q6_K path already partly does), order stops mattering:
+arbitrary parallelism, cross-vendor bit-identity for free, and the **int8 tensor cores** become
+usable. This is a *different numeric regime* (regime-3, integer activation) and would require a
+one-time re-anchor of published digests — but it flips determinism from a tax into something free.
+
+Measured proof (A10G, 32B's own Q4_K `w1`; CPU reference = `dot_q4k_q8_block` + `quantize_block_q8`):
+
+- GPU integer dot == CPU integer dot: **27,648 / 27,648 bit-identical**.
+- Four different GPU reductions — plain loop, `__dp4a`, warp-per-row, warp+`__dp4a` — **all produce
+  the identical result** (27,648/27,648). Integer sums are associative, so the reduction method
+  is free. Float can never promise this.
+
+Int8 tensor-core proof (T4, `kernels/imma_gemm_test.cu`, a batched int8 GEMM):
+
+| int8 GEMM M=4096 N=512 K=4096 | bit-identity vs serial integer | speed |
+|---|---|---|
+| **IMMA (tensor cores)** | **0 diffs / 2,097,152** | **7.8 int8-TOPS** |
+| `__dp4a` | 0 diffs | 0.2 TOPS |
+| serial integer | (reference) | 0.1 TOPS |
+
+Int8 tensor cores are **bit-exact** (0 differences) and **~125× faster** than the serial integer
+dot — on the same identical result. (The WMMA kernel here is naive, ~6% of the T4's ~130 int8-TOPS
+peak; a tiled kernel goes several× further.) So "deterministic **and** fast" is real via integer +
+tensor cores — a property float tensor cores cannot provide.
+
+### What a production Q4_K-IMMA linear still needs
+
+The feasibility is proven; the kernel is MMQ-class engineering: on-the-fly 4-bit→int8 unpack into
+shared-memory tiles (pre-unpacking would double VRAM — a 32B would not fit 24 GB), a per-sub-block
+integer-scale epilogue matching `dot_q4k_q8_block`, prefill/batch along N (tensor cores win on
+GEMM, not single-token GEMV), the regime-3 re-anchor, and bit-identity CI across GPU archs.
 
 ## Caveats (stated plainly)
 

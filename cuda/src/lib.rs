@@ -61,13 +61,26 @@ extern "C" {
     fn vt_cuda_reset(h: *mut VtCuda);
     fn vt_cuda_step(h: *mut VtCuda, x_embed: *const f32, pos: c_uint, cosc: *const f32, sinc: *const f32, out_logits: *mut f32) -> c_int;
     fn vt_cuda_device_name() -> *const c_char;
-    fn vt_cuda_test_linear(kind: c_int, k: c_int, m: c_int, x: *const f32, w: *const u8, wlen: usize, out: *mut f32) -> c_int;
+    fn vt_cuda_test_linear(kind: c_int, k: c_int, m: c_int, x: *const f32, w: *const u8, wlen: usize, out: *mut f32, iters: c_int) -> c_int;
+    fn vt_cuda_test_linear_int(k: c_int, m: c_int, x: *const f32, w: *const u8, wlen: usize, out: *mut f32, mode: c_int, iters: c_int) -> c_int;
+}
+
+/// TIER-2 (regime-3) integer Q4_K linear: out[M]=W.x[K] via int8-activation integer dot.
+/// mode 0 = plain integer loop, 1 = __dp4a. iters repeats the dot (for timing).
+pub fn test_linear_int(k: usize, m: usize, x: &[f32], w: &[u8], mode: i32, iters: i32) -> Vec<f32> {
+    let mut out = vec![0.0f32; m];
+    let rc = unsafe { vt_cuda_test_linear_int(k as c_int, m as c_int, x.as_ptr(), w.as_ptr(), w.len(), out.as_mut_ptr(), mode, iters) };
+    assert_eq!(rc, 0, "vt_cuda_test_linear_int rc={rc}");
+    out
 }
 
 /// Run one linear of `kind` (0=Q4_K,1=Q6_K,2=Q8_0,3=Q5_0) on the GPU: out[M]=W[M,K].x[K].
 pub fn test_linear(kind_code: i32, k: usize, m: usize, x: &[f32], w: &[u8]) -> Vec<f32> {
+    test_linear_n(kind_code, k, m, x, w, 1)
+}
+pub fn test_linear_n(kind_code: i32, k: usize, m: usize, x: &[f32], w: &[u8], iters: i32) -> Vec<f32> {
     let mut out = vec![0.0f32; m];
-    let rc = unsafe { vt_cuda_test_linear(kind_code, k as c_int, m as c_int, x.as_ptr(), w.as_ptr(), w.len(), out.as_mut_ptr()) };
+    let rc = unsafe { vt_cuda_test_linear(kind_code, k as c_int, m as c_int, x.as_ptr(), w.as_ptr(), w.len(), out.as_mut_ptr(), iters) };
     assert_eq!(rc, 0, "vt_cuda_test_linear rc={rc}");
     out
 }
@@ -388,6 +401,73 @@ mod tests {
                 Some((o, c, g)) => eprintln!("{name} [{dt}]: {nd}/{m} differ, first @ row {o}  cpu={c} gpu={g}"),
             }
         }
+    }
+
+    /// TIER-2 spike: integer-activation Q4_K linear (regime-3). Proves (1) the GPU
+    /// integer dot is bit-identical to the CPU integer reference (dot_q4k_q8_block),
+    /// (2) a plain loop and a __dp4a path give the IDENTICAL result (integer sums are
+    /// associative → order/method-independent → safe for warp reductions & int8 tensor
+    /// cores), and (3) __dp4a is faster. Run with VITNI_GGUF_7B set to any Q4_K model.
+    #[test]
+    #[ignore = "tier-2 spike; set VITNI_GGUF_7B; needs an NVIDIA GPU"]
+    fn tier2_integer_q4k() {
+        use std::time::Instant;
+        use vitni_tensor::ops::quant::{quantize_block_q8, dot_q4k_q8_block, canonical_combine};
+        let path = std::env::var("VITNI_GGUF_7B").expect("set VITNI_GGUF_7B");
+        let file = std::fs::File::open(&path).expect("open gguf");
+        let mmap = unsafe { memmap2::Mmap::map(&file).expect("mmap gguf") };
+        let blob: &[u8] = &mmap;
+        let gguf = GgufFile::parse(blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        eprintln!("device: {}", device_name());
+
+        // pick a Q4_K layer-0 tensor (ffn gate w1 is big → good timing), K = its input dim
+        let l0 = &weights.layers[0];
+        let cands: &[(&str, &QuantTensor, usize, usize)] = &[
+            ("w1", &l0.w1, cfg.hidden_dim, cfg.dim),
+            ("wq", &l0.wq, cfg.n_heads * cfg.head_size(), cfg.dim),
+        ];
+        let (name, t, m, k) = *cands.iter().find(|(_, t, _, _)| format!("{:?}", t.dtype) == "Q4_K")
+            .expect("no Q4_K tensor found in layer 0");
+        eprintln!("layer-0 {name}: Q4_K, M={m} K={k} nsuper={}", k / 256);
+        let x: Vec<f32> = (0..k).map(|i| ((i as f32 * 0.6180339887).fract() - 0.5) * 2.0).collect();
+
+        // CPU integer reference (regime-3): per block quantize_block_q8 + dot_q4k_q8_block, canonical combine
+        let nsuper = k / 256;
+        let q8: Vec<_> = (0..nsuper).map(|s| quantize_block_q8(&x[s * 256..(s + 1) * 256])).collect();
+        let t0 = Instant::now();
+        let mut cpu = vec![0f32; m];
+        for row in 0..m {
+            let wrow = &t.bytes[row * nsuper * 144..(row + 1) * nsuper * 144];
+            let mut parts = vec![0f32; nsuper];
+            for s in 0..nsuper { parts[s] = dot_q4k_q8_block(&wrow[s * 144..(s + 1) * 144], &q8[s], 256); }
+            cpu[row] = canonical_combine(&mut parts);
+        }
+        eprintln!("CPU integer reference: {:.0} ms", t0.elapsed().as_secs_f64() * 1000.0);
+
+        let gpu_plain = test_linear_int(k, m, &x, t.bytes, 0, 1);  // 1 thread/row, plain loop
+        let gpu_dp4a  = test_linear_int(k, m, &x, t.bytes, 1, 1);  // 1 thread/row, __dp4a
+        let gpu_warp  = test_linear_int(k, m, &x, t.bytes, 2, 1);  // warp/row, coalesced
+        let gpu_wdp4a = test_linear_int(k, m, &x, t.bytes, 3, 1);  // warp/row + __dp4a
+        let bit = |a: &[f32], b: &[f32]| (0..a.len()).filter(|&i| a[i].to_bits() == b[i].to_bits()).count();
+        eprintln!("GPU plain  == CPU : {}/{} bit-identical", bit(&gpu_plain, &cpu), m);
+        eprintln!("GPU __dp4a == CPU : {}/{} bit-identical", bit(&gpu_dp4a, &cpu), m);
+        eprintln!("GPU warp   == CPU : {}/{} bit-identical", bit(&gpu_warp, &cpu), m);
+        eprintln!("GPU warp+dp4a == CPU : {}/{} bit-identical (4 different reductions, 1 result)", bit(&gpu_wdp4a, &cpu), m);
+
+        // timing: amortize launch over `iters` dots. Also time the FLOAT coop kernel (Tier-1) for comparison.
+        let iters = 100;
+        let tt = |mode: i32| { let s = Instant::now(); let _ = test_linear_int(k, m, &x, t.bytes, mode, iters); s.elapsed().as_secs_f64() * 1000.0 / iters as f64 };
+        let (plain_ms, dp4a_ms, warp_ms, wdp4a_ms) = (tt(0), tt(1), tt(2), tt(3));
+        let f0 = Instant::now(); let _ = test_linear_n(0, k, m, &x, t.bytes, iters); let float_ms = f0.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+        eprintln!("per-dot ms:  float-coop(Tier1) {:.3}  | int 1-thread {:.3}  int __dp4a {:.3}  int warp {:.3}  int warp+dp4a {:.3}", float_ms, plain_ms, dp4a_ms, warp_ms, wdp4a_ms);
+        eprintln!("best integer vs float-coop: {:.2}x", float_ms / warp_ms.min(wdp4a_ms).max(1e-6));
+
+        assert_eq!(bit(&gpu_plain, &cpu), m, "GPU plain integer != CPU");
+        assert_eq!(bit(&gpu_dp4a, &cpu), m, "GPU __dp4a != CPU");
+        assert_eq!(bit(&gpu_warp, &cpu), m, "GPU warp integer != CPU");
+        assert_eq!(bit(&gpu_wdp4a, &cpu), m, "GPU warp+dp4a != CPU");
     }
 
     /// The CUDA backend issues a certificate identical to the CPU engine. Run on a

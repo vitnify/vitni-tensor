@@ -125,6 +125,55 @@ __global__ void k_q4k_acc(const float* x, const unsigned char* w, float* out, un
     out[gid] = out[gid] + q4k_row(x, w + (size_t)gid * nsuper * 144u, K, nsuper); // fuse residual
 }
 
+// Cooperative Q4_K linear: 8 threads per output row (one per reduction lane). Each lane
+// thread sums ITS lane (positions p ≡ lane mod 8) in increasing-index order; the 8 lane
+// sums are combined through shared memory in the exact fixed tree (per 8192-element chunk,
+// then across chunks). Same arithmetic as k_q4k — identical lane order, identical tree —
+// so bit-identical, but with coalesced x/W reads and 8× row parallelism instead of one
+// serial thread per row. acc != 0 fuses the residual (out += dot).
+__global__ void k_q4k_coop(const float* x, const unsigned char* w, float* out,
+                           unsigned K, unsigned M, unsigned nsuper, int acc) {
+    __shared__ float sh[8][8][8];                 // [row_in_block][lane][chunk]; chunks<=8 (nsuper<=256)
+    unsigned lane = threadIdx.x & 7u;             // reduction lane 0..7
+    unsigned rrow = threadIdx.x >> 3;             // row within block 0..7
+    unsigned row  = blockIdx.x * 8u + rrow;
+    unsigned nch_total = (nsuper + 31u) / 32u;
+    if (row < M) {
+        const unsigned char* wrow = w + (size_t)row * nsuper * 144u;
+        float laneacc = 0.0f; unsigned sb_in_chunk = 0u, nch = 0u;
+        for (unsigned b = 0u; b < nsuper; b++) {
+            const unsigned char* blk = wrow + b * 144u;
+            float d    = f16_to_f32((unsigned short)((unsigned)blk[0] | ((unsigned)blk[1] << 8)));
+            float dmin = f16_to_f32((unsigned short)((unsigned)blk[2] | ((unsigned)blk[3] << 8)));
+            const unsigned char* sc = blk + 4; const unsigned char* qs = blk + 16;
+            unsigned gbase = b * 256u;
+            for (unsigned tt = 0u; tt < 32u; tt++) {           // this lane's 32 positions, in order
+                unsigned p = lane + tt * 8u;
+                unsigned sub = p >> 6, within = p & 63u, t = within & 31u, half = within >> 5;
+                unsigned s, m; get_scale_min_k4(sub * 2u + half, sc, &s, &m);
+                unsigned q = qs[sub * 32u + t];
+                unsigned nib = (half == 0u) ? (q & 0x0Fu) : (q >> 4);
+                float d1 = d * (float)s, mf = dmin * (float)m;
+                float val = d1 * (float)nib - mf;              // --fmad=false: separate rounding
+                float pr = x[gbase + p] * val;
+                laneacc += pr;
+            }
+            sb_in_chunk++;
+            if (sb_in_chunk == 32u || b == nsuper - 1u) { sh[rrow][lane][nch] = laneacc; nch++; laneacc = 0.0f; sb_in_chunk = 0u; }
+        }
+    }
+    __syncthreads();
+    if (row < M && lane == 0u) {
+        float cs[8];
+        for (unsigned c = 0u; c < nch_total; c++) {
+            float l[8]; for (int j = 0; j < 8; j++) l[j] = sh[rrow][j][c];
+            cs[c] = fixed_tree(l, 8u);
+        }
+        float r = fixed_tree(cs, nch_total);
+        out[row] = acc ? (out[row] + r) : r;
+    }
+}
+
 // Q6_K integer linear (quantize x inline per super-block, integer dot). Proven.
 __device__ __forceinline__ float q6k_row(const float* x, const unsigned char* wrow, unsigned nsuper) {
     float parts[256];   // one partial per super-block; sized for hidden up to 65536 (32B/70B/405B)
@@ -165,6 +214,58 @@ __global__ void k_q6k(const float* x, const unsigned char* w, float* out, unsign
 __global__ void k_q6k_acc(const float* x, const unsigned char* w, float* out, unsigned K, unsigned M, unsigned nsuper) {
     unsigned gid = blockIdx.x * blockDim.x + threadIdx.x; if (gid >= M) return;
     out[gid] = out[gid] + q6k_row(x, w + (size_t)gid * nsuper * 210u, nsuper); // fuse residual
+}
+
+// Q6_K quantize-once: the activation x is identical for every output row of a linear,
+// so quantize it ONCE (k_q6k_quantize) and let every row reuse it (k_q6k_dot), instead
+// of re-quantizing x per row. Bit-identical to q6k_row (same amax/div_sw/clamp). This is
+// the dominant speedup for wide layers (ffn_down, lm_head): on a 152k-row lm_head it
+// removes ~152063/152064 of the quantization work.
+__global__ void k_q6k_quantize(const float* x, float* out_dx, signed char* out_qs, unsigned nsuper) {
+    unsigned s = blockIdx.x * blockDim.x + threadIdx.x; if (s >= nsuper) return;
+    const float* xb = x + s * 256u;
+    float amax = 0.0f; for (unsigned i = 0u; i < 256u; i++) { float a = fabsf(xb[i]); if (a > amax) amax = a; }
+    float dx = div_sw(amax, 127.0f);
+    float inv = (dx != 0.0f) ? div_sw(1.0f, dx) : 0.0f;
+    out_dx[s] = dx;
+    signed char* qo = out_qs + s * 256u;
+    for (unsigned i = 0u; i < 256u; i++) { float sc = xb[i] * inv; float bias = (sc >= 0.0f) ? 0.5f : -0.5f; int q = (int)(sc + bias); q = q < -127 ? -127 : (q > 127 ? 127 : q); qo[i] = (signed char)q; }
+}
+__device__ __forceinline__ float q6k_dot_pre(const float* xdx, const signed char* xqs, const unsigned char* wrow, unsigned nsuper) {
+    float parts[256];
+    for (unsigned s = 0u; s < nsuper; s++) {
+        const signed char* qs = xqs + s * 256u;
+        float dx = xdx[s];
+        const unsigned char* blk = wrow + s * 210u;
+        const unsigned char* ql = blk; const unsigned char* qh = blk + 128; const unsigned char* scb = blk + 192;
+        float d_w = f16_to_f32((unsigned short)((unsigned)blk[208] | ((unsigned)blk[209] << 8)));
+        int sums[16]; for (int j = 0; j < 16; j++) sums[j] = 0;
+        for (unsigned hb = 0u; hb < 2u; hb++) {
+            unsigned ql_p = hb * 64u, qh_p = hb * 32u, sc_p = hb * 8u, y = hb * 128u;
+            for (unsigned pass = 0u; pass < 2u; pass++) {
+                unsigned is = pass, l0 = pass * 16u; int a1 = 0, a2 = 0, a3 = 0, a4 = 0;
+                for (unsigned l = l0; l < l0 + 16u; l++) {
+                    unsigned h = (unsigned)qh[qh_p + l], b0 = (unsigned)ql[ql_p + l], b1 = (unsigned)ql[ql_p + l + 32u];
+                    a1 += ((int)((b0 & 0x0Fu) | ((h & 0x03u) << 4)) - 32) * (int)qs[y + l];
+                    a2 += ((int)((b1 & 0x0Fu) | (((h >> 2) & 0x03u) << 4)) - 32) * (int)qs[y + l + 32u];
+                    a3 += ((int)((b0 >> 4) | (((h >> 4) & 0x03u) << 4)) - 32) * (int)qs[y + l + 64u];
+                    a4 += ((int)((b1 >> 4) | (((h >> 6) & 0x03u) << 4)) - 32) * (int)qs[y + l + 96u];
+                }
+                sums[sc_p + is] += a1; sums[sc_p + is + 2u] += a2; sums[sc_p + is + 4u] += a3; sums[sc_p + is + 6u] += a4;
+            }
+        }
+        int acc = 0; for (int j = 0; j < 16; j++) acc += (int)((signed char)scb[j]) * sums[j];
+        parts[s] = d_w * dx * (float)acc;
+    }
+    return fixed_tree(parts, nsuper);
+}
+__global__ void k_q6k_dot(const float* xdx, const signed char* xqs, const unsigned char* w, float* out, unsigned K, unsigned M, unsigned nsuper) {
+    unsigned gid = blockIdx.x * blockDim.x + threadIdx.x; if (gid >= M) return;
+    out[gid] = q6k_dot_pre(xdx, xqs, w + (size_t)gid * nsuper * 210u, nsuper);
+}
+__global__ void k_q6k_dot_acc(const float* xdx, const signed char* xqs, const unsigned char* w, float* out, unsigned K, unsigned M, unsigned nsuper) {
+    unsigned gid = blockIdx.x * blockDim.x + threadIdx.x; if (gid >= M) return;
+    out[gid] = out[gid] + q6k_dot_pre(xdx, xqs, w + (size_t)gid * nsuper * 210u, nsuper);
 }
 
 // Q8_0 linear: dequantize each row on the fly (scale * int8, pure mul) and run the
@@ -355,6 +456,90 @@ __global__ void k_add_bias(float* v, const float* b, unsigned n) {
     v[i] = v[i] + b[i];
 }
 
+// ====================================================================
+// TIER-2 EXPERIMENT (regime-3): integer-activation Q4_K linear.
+// Quantize x to int8 per 256-block (bsums per 32-group), then the per-block dot
+// is EXACT INTEGER arithmetic (Σ int8·int8 in int32) — associative, so it is
+// order-independent and identical on any hardware, and can use the int8 dot
+// instruction __dp4a / int8 tensor cores. Mirrors the CPU's dot_q4k_q8_block +
+// quantize_block_q8 bit-for-bit. This is a DIFFERENT numeric regime from the
+// shipped float Q4_K (a re-anchor), kept behind test entry points only.
+// ====================================================================
+__global__ void k_q4k_q8_quantize(const float* x, float* out_dx, signed char* out_qs, int* out_bsums, unsigned nsuper) {
+    unsigned s = blockIdx.x * blockDim.x + threadIdx.x; if (s >= nsuper) return;
+    const float* xb = x + s * 256u;
+    float amax = 0.0f; for (unsigned i = 0u; i < 256u; i++) { float a = fabsf(xb[i]); if (a > amax) amax = a; }
+    float d = amax / 127.0f;
+    float inv = (d != 0.0f) ? 1.0f / d : 0.0f;
+    out_dx[s] = d;
+    signed char* qo = out_qs + s * 256u;
+    int* bs = out_bsums + s * 8u; for (int g = 0; g < 8; g++) bs[g] = 0;
+    for (unsigned i = 0u; i < 256u; i++) {
+        float scaled = xb[i] * inv; float bias = (scaled >= 0.0f) ? 0.5f : -0.5f;
+        int q = (int)(scaled + bias); q = q < -127 ? -127 : (q > 127 ? 127 : q);
+        qo[i] = (signed char)q; bs[i / 32u] += q;
+    }
+}
+// One Q4_K super-block × a Q8 x-block, exact-integer. mode: 0 = plain loop, 1 = __dp4a.
+__device__ __forceinline__ float q4k_q8_part(float d_x, const signed char* xq, const int* bsums,
+                                             const unsigned char* blk, int mode) {
+    float d = f16_to_f32((unsigned short)((unsigned)blk[0] | ((unsigned)blk[1] << 8)));
+    float dmin = f16_to_f32((unsigned short)((unsigned)blk[2] | ((unsigned)blk[3] << 8)));
+    const unsigned char* sc = blk + 4; const unsigned char* qs = blk + 16;
+    int acc = 0, acc_m = 0;
+    for (unsigned half = 0u; half < 4u; half++) {
+        unsigned s1, m1, s2, m2;
+        get_scale_min_k4(half * 2u, sc, &s1, &m1);
+        get_scale_min_k4(half * 2u + 1u, sc, &s2, &m2);
+        unsigned q_off = half * 32u, base = half * 64u;
+        int s_lo = 0, s_hi = 0;
+        if (mode == 1) {                              // __dp4a: 4 int8 products/instr (exact integer)
+            for (unsigned k = 0u; k < 32u; k += 4u) {
+                int nlo = (int)((unsigned)(qs[q_off+k]&0x0F) | ((unsigned)(qs[q_off+k+1]&0x0F)<<8) | ((unsigned)(qs[q_off+k+2]&0x0F)<<16) | ((unsigned)(qs[q_off+k+3]&0x0F)<<24));
+                int nhi = (int)((unsigned)(qs[q_off+k]>>4) | ((unsigned)(qs[q_off+k+1]>>4)<<8) | ((unsigned)(qs[q_off+k+2]>>4)<<16) | ((unsigned)(qs[q_off+k+3]>>4)<<24));
+                int xlo = (int)((unsigned)(unsigned char)xq[base+k] | ((unsigned)(unsigned char)xq[base+k+1]<<8) | ((unsigned)(unsigned char)xq[base+k+2]<<16) | ((unsigned)(unsigned char)xq[base+k+3]<<24));
+                int xhi = (int)((unsigned)(unsigned char)xq[base+32+k] | ((unsigned)(unsigned char)xq[base+32+k+1]<<8) | ((unsigned)(unsigned char)xq[base+32+k+2]<<16) | ((unsigned)(unsigned char)xq[base+32+k+3]<<24));
+                s_lo = __dp4a(nlo, xlo, s_lo);
+                s_hi = __dp4a(nhi, xhi, s_hi);
+            }
+        } else {                                      // plain integer loop (reference order)
+            for (unsigned l = 0u; l < 32u; l++) {
+                s_lo += (int)(qs[q_off + l] & 0x0F) * (int)xq[base + l];
+                s_hi += (int)(qs[q_off + l] >> 4)   * (int)xq[base + 32u + l];
+            }
+        }
+        acc   += (int)s1 * s_lo + (int)s2 * s_hi;
+        acc_m += (int)m1 * bsums[half * 2u] + (int)m2 * bsums[half * 2u + 1u];
+    }
+    float a1 = d * d_x, a2 = dmin * d_x;              // d*xq.d*acc - dmin*xq.d*acc_m  (--fmad=false)
+    return a1 * (float)acc - a2 * (float)acc_m;
+}
+__global__ void k_q4k_q8_dot(const float* dx, const signed char* qs, const int* bsums,
+                             const unsigned char* w, float* out, unsigned M, unsigned nsuper, int mode) {
+    unsigned gid = blockIdx.x * blockDim.x + threadIdx.x; if (gid >= M) return;
+    const unsigned char* wrow = w + (size_t)gid * nsuper * 144u;
+    float parts[256];
+    for (unsigned s = 0u; s < nsuper; s++)
+        parts[s] = q4k_q8_part(dx[s], qs + s * 256u, bsums + s * 8u, wrow + s * 144u, mode);
+    out[gid] = fixed_tree(parts, nsuper);
+}
+// Warp-per-row integer Q4_K: 32 threads cooperate on ONE row, each computing some
+// super-blocks' parts (reads the row's weights COALESCED), then the per-block floats
+// are combined by thread 0 in the fixed canonical order. The per-block dot is exact
+// integer, so splitting blocks across the warp doesn't change a bit. inner mode:
+// 0 = plain, 1 = __dp4a.
+__global__ void k_q4k_q8_dot_warp(const float* dx, const signed char* qs, const int* bsums,
+                                  const unsigned char* w, float* out, unsigned M, unsigned nsuper, int mode) {
+    unsigned row = blockIdx.x; if (row >= M) return;
+    unsigned t = threadIdx.x;                      // 0..31 (one warp = one row)
+    __shared__ float parts[256];
+    const unsigned char* wrow = w + (size_t)row * nsuper * 144u;
+    for (unsigned s = t; s < nsuper; s += 32u)
+        parts[s] = q4k_q8_part(dx[s], qs + s * 256u, bsums + s * 8u, wrow + s * 144u, mode);
+    __syncthreads();
+    if (t == 0u) out[row] = fixed_tree(parts, nsuper);
+}
+
 // ============================ host driver (C ABI) ============================
 
 typedef struct {
@@ -373,6 +558,7 @@ typedef struct VtCuda {
     int *q6k_wq, *q6k_wk, *q6k_wv, *q6k_wo, *q6k_w1, *q6k_w2, *q6k_w3;
     float **d_bq, **d_bk, **d_bv;    // optional QKV bias (null when absent)
     float **d_keyc, **d_valc;
+    float *d_q8_dx; signed char *d_q8_qs;   // Q6_K quantize-once scratch (x quantized per matmul)
     float *d_x, *d_xb, *d_q, *d_att, *d_gate, *d_up, *d_inner, *d_logits, *d_cos, *d_sin;
     int err;
 } VtCuda;
@@ -453,19 +639,34 @@ extern "C" int vt_cuda_finalize(VtCuda* h) {
     h->d_gate = dev_zeros(c->hidden, &h->err); h->d_up = dev_zeros(c->hidden, &h->err);
     h->d_inner = dev_zeros(c->hidden, &h->err); h->d_logits = dev_zeros(c->vocab, &h->err);
     h->d_cos = dev_zeros(c->head_size / 2, &h->err); h->d_sin = dev_zeros(c->head_size / 2, &h->err);
+    // Q6_K quantize-once scratch: one dx + 256 int8 per super-block of the widest input.
+    int maxfeat = c->dim > c->hidden ? c->dim : c->hidden;
+    int maxnsuper = (maxfeat + 255) / 256;
+    h->d_q8_dx = dev_zeros(maxnsuper, &h->err);
+    if (cudaMalloc(&h->d_q8_qs, (size_t)maxnsuper * 256) != cudaSuccess) h->err = 1;
     cudaError_t e = cudaDeviceSynchronize();
     if (e != cudaSuccess) h->err = 1;
     return h->err;
 }
 
-// kind: 0 = Q4_K, 1 = Q6_K, 2 = Q8_0, 3 = Q5_0
-static inline void lin(const float* in, const unsigned char* w, int kind, float* out, int M, int K, int acc) {
+// kind: 0 = Q4_K, 1 = Q6_K, 2 = Q8_0, 3 = Q5_0. q8dx/q8qs are the Q6_K quantize-once
+// scratch; when non-null, Q6_K quantizes the input once then dots every row (fast path).
+static inline void lin(const float* in, const unsigned char* w, int kind, float* out, int M, int K, int acc,
+                       float* q8dx, signed char* q8qs) {
     int nsuper = K / 256;
     dim3 g((M + 63) / 64), b(64);
-    if (kind == 1)      { if (acc) k_q6k_acc<<<g, b>>>(in, w, out, K, M, nsuper); else k_q6k<<<g, b>>>(in, w, out, K, M, nsuper); }
+    if (kind == 1) {
+        if (q8dx) {  // quantize-once (fast): one quantize of the input, then per-row integer dot
+            k_q6k_quantize<<<(nsuper + 63) / 64, 64>>>(in, q8dx, q8qs, nsuper);
+            if (acc) k_q6k_dot_acc<<<g, b>>>(q8dx, q8qs, w, out, K, M, nsuper);
+            else     k_q6k_dot<<<g, b>>>(q8dx, q8qs, w, out, K, M, nsuper);
+        } else {     // fused fallback (re-quantizes per row)
+            if (acc) k_q6k_acc<<<g, b>>>(in, w, out, K, M, nsuper); else k_q6k<<<g, b>>>(in, w, out, K, M, nsuper);
+        }
+    }
     else if (kind == 2) { if (acc) k_q8_0_acc<<<g, b>>>(in, w, out, K, M);        else k_q8_0<<<g, b>>>(in, w, out, K, M); }
     else if (kind == 3) { if (acc) k_q5_0_acc<<<g, b>>>(in, w, out, K, M);        else k_q5_0<<<g, b>>>(in, w, out, K, M); }
-    else                { if (acc) k_q4k_acc<<<g, b>>>(in, w, out, K, M, nsuper); else k_q4k<<<g, b>>>(in, w, out, K, M, nsuper); }
+    else                { k_q4k_coop<<<(M + 7) / 8, 64>>>(in, w, out, K, M, nsuper, acc); }  // cooperative, coalesced
 }
 
 extern "C" void vt_cuda_reset(VtCuda* h) {
@@ -496,11 +697,11 @@ extern "C" int vt_cuda_step(VtCuda* h, const float* x_embed, unsigned pos, const
     l1("embed d_x", h->d_x, dim);
     for (int l = 0; l < c->n_layers; l++) {
         k_rms<<<1, 64>>>(h->d_x, h->d_rms_att[l], h->d_xb, dim, 1, c->rms_eps);
-        lin(h->d_xb, h->d_wq[l], h->q6k_wq[l], h->d_q, h->q_out, dim, 0);
+        lin(h->d_xb, h->d_wq[l], h->q6k_wq[l], h->d_q, h->q_out, dim, 0, h->d_q8_dx, h->d_q8_qs);
         float* kptr = h->d_keyc[l] + (size_t)pos * kv_dim;
         float* vptr = h->d_valc[l] + (size_t)pos * kv_dim;
-        lin(h->d_xb, h->d_wk[l], h->q6k_wk[l], kptr, kv_dim, dim, 0);
-        lin(h->d_xb, h->d_wv[l], h->q6k_wv[l], vptr, kv_dim, dim, 0);
+        lin(h->d_xb, h->d_wk[l], h->q6k_wk[l], kptr, kv_dim, dim, 0, h->d_q8_dx, h->d_q8_qs);
+        lin(h->d_xb, h->d_wv[l], h->q6k_wv[l], vptr, kv_dim, dim, 0, h->d_q8_dx, h->d_q8_qs);
         // optional QKV bias (Qwen2), after projection and BEFORE rope/cache-use
         if (h->d_bq[l]) k_add_bias<<<(h->q_out + 255) / 256, 256>>>(h->d_q, h->d_bq[l], h->q_out);
         if (h->d_bk[l]) k_add_bias<<<(kv_dim + 255) / 256, 256>>>(kptr, h->d_bk[l], kv_dim);
@@ -514,17 +715,17 @@ extern "C" int vt_cuda_step(VtCuda* h, const float* x_embed, unsigned pos, const
             k_rope<<<(n_kv + 63) / 64, 64>>>(kptr, h->d_cos, h->d_sin, kptr, 1, n_kv, head_size);
         }
         k_attention<<<(n_heads + 63) / 64, 64>>>(h->d_q, h->d_keyc[l], h->d_valc[l], h->d_att, n_heads, head_size, kv_dim, c->kv_mul, pos);
-        lin(h->d_att, h->d_wo[l], h->q6k_wo[l], h->d_x, dim, dim, 1);                 // wo + residual
+        lin(h->d_att, h->d_wo[l], h->q6k_wo[l], h->d_x, dim, dim, 1, h->d_q8_dx, h->d_q8_qs);                 // wo + residual
         k_rms<<<1, 64>>>(h->d_x, h->d_rms_ffn[l], h->d_xb, dim, 1, c->rms_eps);
-        lin(h->d_xb, h->d_w1[l], h->q6k_w1[l], h->d_gate, hidden, dim, 0);
-        lin(h->d_xb, h->d_w3[l], h->q6k_w3[l], h->d_up, hidden, dim, 0);
+        lin(h->d_xb, h->d_w1[l], h->q6k_w1[l], h->d_gate, hidden, dim, 0, h->d_q8_dx, h->d_q8_qs);
+        lin(h->d_xb, h->d_w3[l], h->q6k_w3[l], h->d_up, hidden, dim, 0, h->d_q8_dx, h->d_q8_qs);
         k_silu_mul<<<(hidden + 255) / 256, 256>>>(h->d_gate, h->d_up, h->d_inner, hidden);
-        lin(h->d_inner, h->d_w2[l], h->q6k_w2[l], h->d_x, dim, hidden, 1);            // w2 + residual
+        lin(h->d_inner, h->d_w2[l], h->q6k_w2[l], h->d_x, dim, hidden, 1, h->d_q8_dx, h->d_q8_qs);            // w2 + residual
         if (dbg && l <= 1) { char t[32]; snprintf(t, 32, "after layer %d", l); l1(t, h->d_x, dim); }
     }
     k_rms<<<1, 64>>>(h->d_x, h->d_rms_final, h->d_xb, dim, 1, c->rms_eps);
     if (dbg) l1("final rms xb", h->d_xb, dim);
-    lin(h->d_xb, h->d_wcls, h->wcls_q6k, h->d_logits, c->vocab, dim, 0);
+    lin(h->d_xb, h->d_wcls, h->wcls_q6k, h->d_logits, c->vocab, dim, 0, h->d_q8_dx, h->d_q8_qs);
     if (dbg) l1("logits", h->d_logits, c->vocab);
     cudaError_t e = cudaDeviceSynchronize();
     if (e != cudaSuccess) return (int)e;
@@ -534,16 +735,43 @@ extern "C" int vt_cuda_step(VtCuda* h, const float* x_embed, unsigned pos, const
 
 // Isolation hook: run ONE linear of the given kind on the GPU (out[M] = W[M,K] . x[K]).
 // Lets a host test compare a single quant kernel against the CPU dequant+canonical_dot.
-extern "C" int vt_cuda_test_linear(int kind, int K, int M, const float* x, const unsigned char* w, size_t wlen, float* out) {
+extern "C" int vt_cuda_test_linear(int kind, int K, int M, const float* x, const unsigned char* w, size_t wlen, float* out, int iters) {
     float* dx = nullptr; unsigned char* dw = nullptr; float* dout = nullptr; int err = 0;
     dx = dev_floats(x, (size_t)K, &err);
     dw = dev_bytes(w, wlen, &err);
     dout = dev_zeros((size_t)M, &err);
+    float* q8dx = dev_zeros(K / 256 > 0 ? K / 256 : 1, &err); signed char* q8qs = nullptr;
+    if (cudaMalloc(&q8qs, (size_t)((K / 256 > 0 ? K / 256 : 1)) * 256) != cudaSuccess) err = 1;
     if (err) return -1;
-    lin(dx, dw, kind, dout, M, K, 0);
+    for (int it = 0; it < (iters < 1 ? 1 : iters); it++)
+        lin(dx, dw, kind, dout, M, K, 0, q8dx, q8qs);   // Q6_K uses quantize-once scratch
     if (cudaDeviceSynchronize() != cudaSuccess) return -2;
     cudaMemcpy(out, dout, (size_t)M * 4, cudaMemcpyDeviceToHost);
-    cudaFree(dx); cudaFree(dw); cudaFree(dout);
+    cudaFree(dx); cudaFree(dw); cudaFree(dout); cudaFree(q8dx); cudaFree(q8qs);
+    return 0;
+}
+
+// TIER-2 isolation hook: integer Q4_K linear. Quantizes x once, runs the dot `iters`
+// times (for timing), returns out[M]. mode: 0 = plain integer loop, 1 = __dp4a.
+extern "C" int vt_cuda_test_linear_int(int K, int M, const float* x, const unsigned char* w, size_t wlen,
+                                       float* out, int mode, int iters) {
+    int nsuper = K / 256; int err = 0;
+    float* dx_in = dev_floats(x, (size_t)K, &err);
+    unsigned char* dw = dev_bytes(w, wlen, &err);
+    float* ddx = dev_zeros(nsuper, &err);
+    float* dout = dev_zeros((size_t)M, &err);
+    signed char* dqs = nullptr; int* dbs = nullptr;
+    if (cudaMalloc(&dqs, (size_t)nsuper * 256) != cudaSuccess) err = 1;
+    if (cudaMalloc(&dbs, (size_t)nsuper * 8 * 4) != cudaSuccess) err = 1;
+    if (err) return -1;
+    k_q4k_q8_quantize<<<(nsuper + 63) / 64, 64>>>(dx_in, ddx, dqs, dbs, nsuper);
+    for (int it = 0; it < (iters < 1 ? 1 : iters); it++) {
+        if (mode >= 2) k_q4k_q8_dot_warp<<<M, 32>>>(ddx, dqs, dbs, dw, dout, M, nsuper, mode & 1);  // warp-per-row (coalesced)
+        else           k_q4k_q8_dot<<<(M + 63) / 64, 64>>>(ddx, dqs, dbs, dw, dout, M, nsuper, mode); // 1 thread/row
+    }
+    if (cudaDeviceSynchronize() != cudaSuccess) return -2;
+    cudaMemcpy(out, dout, (size_t)M * 4, cudaMemcpyDeviceToHost);
+    cudaFree(dx_in); cudaFree(dw); cudaFree(ddx); cudaFree(dout); cudaFree(dqs); cudaFree(dbs);
     return 0;
 }
 
