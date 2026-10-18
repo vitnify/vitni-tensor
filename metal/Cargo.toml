@@ -21,6 +21,11 @@ license = "Apache-2.0"
 vitni-tensor = { path = ".." }
 metal = "0.29"
 libm = "=0.2.16"
+blake3 = "1"
+
+[features]
+# Passthrough so the tax-matrix harness can time the std-parallel CPU path.
+parallel = ["vitni-tensor/std-parallel"]
 
 [dev-dependencies]
 blake3 = "1"

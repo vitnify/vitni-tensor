@@ -61,8 +61,8 @@ const FWD: &str = include_str!("../../kernels/forward_ops.metal");
 pub struct MetalForward {
     device: Device,
     queue: CommandQueue,
-    pl_f32_matvec: ComputePipelineState,
-    pl_f32_matvec_acc: ComputePipelineState,
+    pl_q4k_linear: ComputePipelineState,
+    pl_q4k_linear_acc: ComputePipelineState,
     pl_q6k_quant: ComputePipelineState,
     pl_q6k_dot: ComputePipelineState,
     pl_q6k_dot_acc: ComputePipelineState,
@@ -132,17 +132,16 @@ impl MetalForward {
         let ubuf = |bytes_: &[u8]| device.new_buffer_with_data(bytes_.as_ptr() as *const c_void, bytes_.len() as u64, shared);
         let fbuf = |v: &[f32]| device.new_buffer_with_data(v.as_ptr() as *const c_void, (v.len() * 4) as u64, shared);
         let zbuf = |n: usize| device.new_buffer((n * 4).max(4) as u64, shared);
-        // Q4_K weights are dequantized to f32 ONCE here (bit-identical values to
-        // the fused dequant), so the per-token dequant disappears. Q6_K stays
-        // quantized (its shipped regime is the integer dot).
+        // Both Q4_K and Q6_K stay QUANTIZED on the GPU. The fused q4k_linear /
+        // q6k_dot kernels dequantize in-kernel with the canonical reduction, so
+        // they are bit-identical to the CPU hot path (proven in
+        // kernels/conformance-forward). The old "dequantize Q4_K to f32 once +
+        // f32_matvec" shortcut diverged from the fused reduction at 7B matrix
+        // sizes (TinyLlama agreed by luck; Mistral-7B did not). Keeping weights
+        // quantized also avoids the f32 memory blow-up.
         let mkw = |t: &QuantTensor, n: usize, k: usize| {
             let is_q6k = format!("{:?}", t.dtype) == "Q6_K";
-            let buf = if is_q6k {
-                ubuf(t.bytes)
-            } else {
-                fbuf(&vitni_tensor::ops::quant::dequantize_q4_k(t.bytes).expect("dequantize Q4_K"))
-            };
-            WBuf { buf, is_q6k, n, k }
+            WBuf { buf: ubuf(t.bytes), is_q6k, n, k }
         };
 
         let dim = cfg.dim;
@@ -155,8 +154,8 @@ impl MetalForward {
         let seq = cfg.seq_len;
 
         Ok(MetalForward {
-            pl_f32_matvec: pipeline(&device, Q4K, "f32_matvec")?,
-            pl_f32_matvec_acc: pipeline(&device, Q4K, "f32_matvec_acc")?,
+            pl_q4k_linear: pipeline(&device, Q4K, "q4k_linear")?,
+            pl_q4k_linear_acc: pipeline(&device, Q4K, "q4k_linear_acc")?,
             pl_q6k_quant: pipeline(&device, Q6K_INT, "q6k_quantize")?,
             pl_q6k_dot: pipeline(&device, Q6K_INT, "q6k_integer_dot")?,
             pl_q6k_dot_acc: pipeline(&device, Q6K_INT, "q6k_integer_dot_acc")?,
@@ -232,7 +231,7 @@ impl MetalForward {
                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
                 &[(4, bytes(&dims))], wt.n);
         } else {
-            self.disp(e, &self.pl_f32_matvec, // pre-dequantized f32 weights
+            self.disp(e, &self.pl_q4k_linear, // fused dequant + canonical dot on quantized Q4_K
                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
                 &[(3, bytes(&dims))], wt.n);
         }
@@ -253,7 +252,7 @@ impl MetalForward {
                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
                 &[(4, bytes(&dims))], wt.n);
         } else {
-            self.disp(e, &self.pl_f32_matvec_acc, // pre-dequantized f32 weights
+            self.disp(e, &self.pl_q4k_linear_acc, // fused dequant + canonical dot on quantized Q4_K
                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
                 &[(3, bytes(&dims))], wt.n);
         }
@@ -424,5 +423,30 @@ mod tests {
 
         assert_eq!(cpu.generated_tokens, gpu.generated_tokens, "GPU generated different tokens");
         assert_eq!(cpu.cert.digest, gpu.cert.digest, "GPU certificate digest differs from CPU");
+    }
+
+    /// Regression guard for a bug that only showed at LARGE matrix sizes. MetalForward
+    /// used to pre-dequantize Q4_K to f32 and run f32_matvec; that diverged from the
+    /// fused canonical reduction at 7B dimensions (Mistral: dim 4096, FFN 14336), while
+    /// TinyLlama's smaller dims agreed by luck. Testing only TinyLlama missed it. Run
+    /// this on a 7B-class model whenever one is available.
+    #[test]
+    #[ignore = "needs a 7B-class model; set VITNI_GGUF_7B (e.g. Mistral-7B Q4_K_M)"]
+    fn metal_certificate_matches_cpu_7b() {
+        let path = match std::env::var("VITNI_GGUF_7B") {
+            Ok(p) => p,
+            Err(_) => { eprintln!("VITNI_GGUF_7B not set; skipping 7B bit-identity check"); return; }
+        };
+        let blob = std::fs::read(&path).expect("read gguf");
+        let hash = *blake3::hash(&blob).as_bytes();
+        let gguf = GgufFile::parse(&blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        let prompt: Vec<u32> = vec![1, 9038, 2501, 263, 931, 29892];
+        let req = Request { model_id: "m7b", prompt_tokens: &prompt, n_new_tokens: 12 };
+        let cpu = inference::run_quantized(&cfg, &weights, &hash, &req).unwrap();
+        let gpu = run_metal(&cfg, &weights, &hash, &req).unwrap();
+        assert_eq!(cpu.generated_tokens, gpu.generated_tokens, "7B: GPU generated different tokens");
+        assert_eq!(cpu.cert.digest, gpu.cert.digest, "7B: GPU certificate digest differs from CPU");
     }
 }
