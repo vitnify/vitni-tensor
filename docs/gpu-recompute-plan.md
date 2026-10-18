@@ -41,9 +41,11 @@ harness output; the GPU advantage grows with model size.)
   seam decouples the forward from the engine, which is what makes a GPU backend a drop-in.
 - **Metal** — `vitni-tensor-metal` crate: the full quantized forward on Apple GPU, bit-exact,
   VALIDATED here. It is a separate std/macOS workspace and is NOT published.
-- **CUDA** — a full-forward conformance kernel (`kernels/cuda_forward_conformance.cu`) proves
-  bit-identity on NVIDIA (T4 run in `kernels/RESULTS-nvidia-t4.txt`), but there is NO host
-  crate wiring it into inference (no `cuda/` equivalent of `metal/`).
+- **CUDA** — `vitni-tensor-cuda` (the `cuda/` crate) is the NVIDIA equivalent of `metal/`: the
+  full quantized forward on an NVIDIA GPU, bit-identical to the CPU engine, VALIDATED on a
+  Tesla T4 (sm_75) and an A10G (sm_86) across Mistral-7B and Qwen2.5-0.5B/32B. The kernels are
+  a superset of the conformance `.cu` (`kernels/cuda_forward_conformance.cu`), compiled by
+  nvcc at build time with `--fmad=false`. Benchmark + numbers: `docs/cuda-benchmark.md`.
 - **Shipped recompute** — the `vitni-receipt` binary (`src/bin/vitni-receipt.rs`) is CPU-only,
   no device flag. The SDK's Level-2 shells out to it (`VITNI_RECEIPT_BIN`).
 

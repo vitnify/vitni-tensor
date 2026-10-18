@@ -1,0 +1,33 @@
+# vitni-tensor-cuda — a deterministic CUDA (NVIDIA GPU) inference backend.
+#
+# Mirrors vitni-tensor-metal: the no_std vitni-tensor core defines the seam
+# (inference::run_quantized_with_forward); this host crate provides the CUDA
+# implementation that runs the full quantized forward on an NVIDIA GPU and issues
+# a certificate IDENTICAL to the CPU's, because its logits are bit-for-bit
+# identical (the kernels are proven in kernels/cuda_forward_conformance.cu).
+#
+# The forward lives in a .cu compiled by nvcc at build time (build.rs) with
+# --fmad=false -ftz=false, so the deterministic contract is baked into the SASS.
+# std + Linux + CUDA toolkit, so it is its own workspace (never built on the
+# no_std core's CI).
+[package]
+name = "vitni-tensor-cuda"
+version = "0.1.0"
+edition = "2021"
+description = "CUDA (NVIDIA GPU) inference backend for vitni-tensor, bit-identical to the CPU engine."
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+vitni-tensor = { path = ".." }
+libm = "=0.2.16"
+blake3 = "1"
+memmap2 = "0.9"   # mmap the GGUF so a 19GB+ model needn't fit in host RAM
+
+[features]
+# Passthrough so the harness can time the std-parallel CPU path too.
+parallel = ["vitni-tensor/std-parallel"]
+
+[dev-dependencies]
+blake3 = "1"
