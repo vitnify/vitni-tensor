@@ -32,6 +32,7 @@ struct VtCfg {
     vocab: c_int,
     max_seq: c_int,
     rope_neox: c_int,
+    regime: c_int,
     rms_eps: f32,
     rope_theta: f32,
 }
@@ -145,7 +146,13 @@ pub struct CudaForward<'w> {
 }
 
 impl<'w> CudaForward<'w> {
+    /// regime-2 (shipped): float Q4_K + fixed_tree Q6_K.
     pub fn new(cfg: &Config, w: &'w QuantizedWeights<'w>) -> Result<CudaForward<'w>, CudaError> {
+        Self::new_regime(cfg, w, 2)
+    }
+    /// regime 2 (shipped) or 3 (integer-activation + running-sum k-quant linears, matching
+    /// inference::run_quantized_regime3). regime-3 is unpublished.
+    pub fn new_regime(cfg: &Config, w: &'w QuantizedWeights<'w>, regime: i32) -> Result<CudaForward<'w>, CudaError> {
         // Supported: interleaved (Llama/Mistral) and NeoX (Qwen2) RoPE, optional
         // QKV bias (Qwen2). The embedding lookup is done on the host for any dtype.
         let head_size = cfg.head_size();
@@ -171,6 +178,7 @@ impl<'w> CudaForward<'w> {
             vocab: vocab as c_int,
             max_seq: max_seq as c_int,
             rope_neox: if w.rope_neox { 1 } else { 0 },
+            regime: regime as c_int,
             rms_eps: w.rms_eps,
             rope_theta: w.rope_theta,
         };
@@ -291,6 +299,18 @@ pub fn run_cuda(
     req: &Request,
 ) -> Result<Outcome, CudaError> {
     let mut cf = CudaForward::new(cfg, weights)?;
+    run_cuda_with(&mut cf, cfg, weights_hash, req)
+}
+
+/// Regime-3 GPU forward: integer-activation + running-sum k-quant linears. Its certificate
+/// must equal `inference::run_quantized_regime3` on CPU (same regime-3 logits).
+pub fn run_cuda_regime3(
+    cfg: &Config,
+    weights: &QuantizedWeights,
+    weights_hash: &[u8; 32],
+    req: &Request,
+) -> Result<Outcome, CudaError> {
+    let mut cf = CudaForward::new_regime(cfg, weights, 3)?;
     run_cuda_with(&mut cf, cfg, weights_hash, req)
 }
 
@@ -468,6 +488,57 @@ mod tests {
         assert_eq!(bit(&gpu_dp4a, &cpu), m, "GPU __dp4a != CPU");
         assert_eq!(bit(&gpu_warp, &cpu), m, "GPU warp integer != CPU");
         assert_eq!(bit(&gpu_wdp4a, &cpu), m, "GPU warp+dp4a != CPU");
+    }
+
+    /// Engagement proof (fast, no CPU recompute): a GPU regime-3 step must differ from a GPU
+    /// regime-2 step at the LOGITS level — proving the integer kernels are actually used (the
+    /// cert can coincide when the argmax tokens don't flip).
+    #[test]
+    #[ignore = "needs a Q4_K model + NVIDIA GPU; set VITNI_GGUF_7B"]
+    fn cuda_regime3_engages() {
+        let path = std::env::var("VITNI_GGUF_7B").expect("set VITNI_GGUF_7B");
+        let file = std::fs::File::open(&path).expect("open gguf");
+        let mmap = unsafe { memmap2::Mmap::map(&file).expect("mmap gguf") };
+        let blob: &[u8] = &mmap;
+        let gguf = GgufFile::parse(blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        let mut cf2 = CudaForward::new(&cfg, &weights).unwrap();
+        let mut cf3 = CudaForward::new_regime(&cfg, &weights, 3).unwrap();
+        let l2 = cf2.step(1, 0);
+        let l3 = cf3.step(1, 0);
+        let diffs = (0..l2.len()).filter(|&i| l2[i].to_bits() != l3[i].to_bits()).count();
+        eprintln!("GPU regime-3 vs regime-2 logits: {}/{} differ", diffs, l2.len());
+        assert!(diffs > 0, "GPU regime-3 did not engage — logits identical to regime-2");
+    }
+
+    /// Increment (b): the GPU regime-3 forward issues a certificate identical to the CPU
+    /// regime-3 reference (inference::run_quantized_regime3) — i.e. the integer-activation +
+    /// running-sum k-quant linears match end-to-end. Run on a 7B-class Q4_K model.
+    #[test]
+    #[ignore = "needs a Q4_K model + NVIDIA GPU; set VITNI_GGUF_7B"]
+    fn cuda_regime3_matches_cpu_regime3() {
+        let path = std::env::var("VITNI_GGUF_7B").expect("set VITNI_GGUF_7B");
+        let file = std::fs::File::open(&path).expect("open gguf");
+        let mmap = unsafe { memmap2::Mmap::map(&file).expect("mmap gguf") };
+        let blob: &[u8] = &mmap;
+        let hash = *blake3::hash(blob).as_bytes();
+        let gguf = GgufFile::parse(blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        eprintln!("device: {}", device_name());
+        let prompt: Vec<u32> = vec![1, 9038, 2501, 263, 931, 29892];
+        let req = Request { model_id: "r3", prompt_tokens: &prompt, n_new_tokens: 12 };
+
+        let cpu = inference::run_quantized_regime3(&cfg, &weights, &hash, &req).unwrap();
+        let gpu = run_cuda_regime3(&cfg, &weights, &hash, &req).unwrap();
+        // also the shipped regime-2, to confirm regime-3 actually changed the computation
+        let cpu2 = inference::run_quantized(&cfg, &weights, &hash, &req).unwrap();
+        eprintln!("regime-2 digest {:02x?}  regime-3 cpu {:02x?}  regime-3 gpu {:02x?}",
+            &cpu2.cert.digest[..4], &cpu.cert.digest[..4], &gpu.cert.digest[..4]);
+        assert_eq!(cpu.generated_tokens, gpu.generated_tokens, "regime-3: GPU tokens != CPU tokens");
+        assert_eq!(cpu.cert.digest, gpu.cert.digest, "regime-3: GPU cert != CPU cert");
+        eprintln!("PASS: GPU regime-3 cert == CPU regime-3 cert, bit-for-bit");
     }
 
     /// The CUDA backend issues a certificate identical to the CPU engine. Run on a

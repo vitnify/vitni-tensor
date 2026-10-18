@@ -540,11 +540,56 @@ __global__ void k_q4k_q8_dot_warp(const float* dx, const signed char* qs, const 
     if (t == 0u) out[row] = fixed_tree(parts, nsuper);
 }
 
+// ====================================================================
+// regime-3 forward kernels: integer activation + RUNNING-SUM combine across
+// super-blocks (matches the engine's linear_q4_k_integer_rs / linear_q6_k_integer_rs).
+// One thread per output row (the per-token forward is a matvec, N=1). Q4_K reuses
+// q4k_q8_part; Q6_K's per-super-block integer dot is inlined here. acc fuses the residual.
+// ====================================================================
+__device__ __forceinline__ float q6k_q8_part(const float* xdx, const signed char* xqs, const unsigned char* blk, unsigned s) {
+    const signed char* qs = xqs + s * 256u;
+    float dx = xdx[s];
+    const unsigned char* ql = blk; const unsigned char* qh = blk + 128; const unsigned char* scb = blk + 192;
+    float d_w = f16_to_f32((unsigned short)((unsigned)blk[208] | ((unsigned)blk[209] << 8)));
+    int sums[16]; for (int j = 0; j < 16; j++) sums[j] = 0;
+    for (unsigned hb = 0u; hb < 2u; hb++) {
+        unsigned ql_p = hb * 64u, qh_p = hb * 32u, sc_p = hb * 8u, y = hb * 128u;
+        for (unsigned pass = 0u; pass < 2u; pass++) {
+            unsigned is = pass, l0 = pass * 16u; int a1 = 0, a2 = 0, a3 = 0, a4 = 0;
+            for (unsigned l = l0; l < l0 + 16u; l++) {
+                unsigned h = (unsigned)qh[qh_p + l], b0 = (unsigned)ql[ql_p + l], b1 = (unsigned)ql[ql_p + l + 32u];
+                a1 += ((int)((b0 & 0x0Fu) | ((h & 0x03u) << 4)) - 32) * (int)qs[y + l];
+                a2 += ((int)((b1 & 0x0Fu) | (((h >> 2) & 0x03u) << 4)) - 32) * (int)qs[y + l + 32u];
+                a3 += ((int)((b0 >> 4) | (((h >> 4) & 0x03u) << 4)) - 32) * (int)qs[y + l + 64u];
+                a4 += ((int)((b1 >> 4) | (((h >> 6) & 0x03u) << 4)) - 32) * (int)qs[y + l + 96u];
+            }
+            sums[sc_p + is] += a1; sums[sc_p + is + 2u] += a2; sums[sc_p + is + 4u] += a3; sums[sc_p + is + 6u] += a4;
+        }
+    }
+    int acc = 0; for (int j = 0; j < 16; j++) acc += (int)((signed char)scb[j]) * sums[j];
+    return d_w * dx * (float)acc;
+}
+__global__ void k_q4k_rs(const float* dx, const signed char* qs, const int* bsums, const unsigned char* w, float* out, unsigned M, unsigned nsuper, int acc) {
+    unsigned gid = blockIdx.x * blockDim.x + threadIdx.x; if (gid >= M) return;
+    const unsigned char* wrow = w + (size_t)gid * nsuper * 144u;
+    float sum = 0.0f;
+    for (unsigned s = 0u; s < nsuper; s++) sum += q4k_q8_part(dx[s], qs + s * 256u, bsums + s * 8u, wrow + s * 144u, 1);
+    out[gid] = acc ? (out[gid] + sum) : sum;
+}
+__global__ void k_q6k_rs(const float* dx, const signed char* qs, const unsigned char* w, float* out, unsigned M, unsigned nsuper, int acc) {
+    unsigned gid = blockIdx.x * blockDim.x + threadIdx.x; if (gid >= M) return;
+    const unsigned char* wrow = w + (size_t)gid * nsuper * 210u;
+    float sum = 0.0f;
+    for (unsigned s = 0u; s < nsuper; s++) sum += q6k_q8_part(dx, qs, wrow + s * 210u, s);
+    out[gid] = acc ? (out[gid] + sum) : sum;
+}
+
 // ============================ host driver (C ABI) ============================
 
 typedef struct {
     int dim, hidden, n_layers, n_heads, head_size, kv_dim, kv_mul, vocab, max_seq;
     int rope_neox;               // 1 = NeoX split-half rotation (Qwen2); 0 = interleaved (Llama)
+    int regime;                  // 2 = shipped (float Q4_K, fixed_tree Q6_K); 3 = integer + running-sum
     float rms_eps, rope_theta;
 } VtCfg;
 
@@ -558,7 +603,9 @@ typedef struct VtCuda {
     int *q6k_wq, *q6k_wk, *q6k_wv, *q6k_wo, *q6k_w1, *q6k_w2, *q6k_w3;
     float **d_bq, **d_bk, **d_bv;    // optional QKV bias (null when absent)
     float **d_keyc, **d_valc;
-    float *d_q8_dx; signed char *d_q8_qs;   // Q6_K quantize-once scratch (x quantized per matmul)
+    float *d_q8_dx; signed char *d_q8_qs;   // quantize-once scratch (x quantized per matmul)
+    int *d_q8_bsums;                         // per-32-group sums of x int8 (Q4_K integer dmin term)
+    int regime;                              // 2 = shipped float/fixed_tree; 3 = integer + running-sum
     float *d_x, *d_xb, *d_q, *d_att, *d_gate, *d_up, *d_inner, *d_logits, *d_cos, *d_sin;
     int err;
 } VtCuda;
@@ -585,6 +632,7 @@ static float* dev_zeros(size_t n, int* err) {
 extern "C" VtCuda* vt_cuda_new(const VtCfg* cfg) {
     VtCuda* h = (VtCuda*)calloc(1, sizeof(VtCuda));
     h->cfg = *cfg;
+    h->regime = cfg->regime ? cfg->regime : 2;
     h->q_out = cfg->n_heads * cfg->head_size;
     int L = cfg->n_layers;
     h->d_rms_att = (float**)calloc(L, sizeof(float*));
@@ -644,17 +692,29 @@ extern "C" int vt_cuda_finalize(VtCuda* h) {
     int maxnsuper = (maxfeat + 255) / 256;
     h->d_q8_dx = dev_zeros(maxnsuper, &h->err);
     if (cudaMalloc(&h->d_q8_qs, (size_t)maxnsuper * 256) != cudaSuccess) h->err = 1;
+    if (cudaMalloc(&h->d_q8_bsums, (size_t)maxnsuper * 8 * 4) != cudaSuccess) h->err = 1;
     cudaError_t e = cudaDeviceSynchronize();
     if (e != cudaSuccess) h->err = 1;
     return h->err;
 }
 
-// kind: 0 = Q4_K, 1 = Q6_K, 2 = Q8_0, 3 = Q5_0. q8dx/q8qs are the Q6_K quantize-once
-// scratch; when non-null, Q6_K quantizes the input once then dots every row (fast path).
+// kind: 0 = Q4_K, 1 = Q6_K, 2 = Q8_0, 3 = Q5_0. q8dx/q8qs/q8bsums are quantize-once scratch.
+// regime 3 routes Q4_K/Q6_K to the integer + running-sum kernels (matches the engine's
+// regime-3); other dtypes are unchanged across regimes.
 static inline void lin(const float* in, const unsigned char* w, int kind, float* out, int M, int K, int acc,
-                       float* q8dx, signed char* q8qs) {
+                       float* q8dx, signed char* q8qs, int regime, int* q8bsums) {
     int nsuper = K / 256;
     dim3 g((M + 63) / 64), b(64);
+    if (regime == 3 && kind == 0) {            // Q4_K integer + running sum
+        k_q4k_q8_quantize<<<(nsuper + 63) / 64, 64>>>(in, q8dx, q8qs, q8bsums, nsuper);
+        k_q4k_rs<<<g, b>>>(q8dx, q8qs, q8bsums, w, out, M, nsuper, acc);
+        return;
+    }
+    if (regime == 3 && kind == 1) {            // Q6_K integer + running sum
+        k_q6k_quantize<<<(nsuper + 63) / 64, 64>>>(in, q8dx, q8qs, nsuper);
+        k_q6k_rs<<<g, b>>>(q8dx, q8qs, w, out, M, nsuper, acc);
+        return;
+    }
     if (kind == 1) {
         if (q8dx) {  // quantize-once (fast): one quantize of the input, then per-row integer dot
             k_q6k_quantize<<<(nsuper + 63) / 64, 64>>>(in, q8dx, q8qs, nsuper);
@@ -697,11 +757,11 @@ extern "C" int vt_cuda_step(VtCuda* h, const float* x_embed, unsigned pos, const
     l1("embed d_x", h->d_x, dim);
     for (int l = 0; l < c->n_layers; l++) {
         k_rms<<<1, 64>>>(h->d_x, h->d_rms_att[l], h->d_xb, dim, 1, c->rms_eps);
-        lin(h->d_xb, h->d_wq[l], h->q6k_wq[l], h->d_q, h->q_out, dim, 0, h->d_q8_dx, h->d_q8_qs);
+        lin(h->d_xb, h->d_wq[l], h->q6k_wq[l], h->d_q, h->q_out, dim, 0, h->d_q8_dx, h->d_q8_qs, h->regime, h->d_q8_bsums);
         float* kptr = h->d_keyc[l] + (size_t)pos * kv_dim;
         float* vptr = h->d_valc[l] + (size_t)pos * kv_dim;
-        lin(h->d_xb, h->d_wk[l], h->q6k_wk[l], kptr, kv_dim, dim, 0, h->d_q8_dx, h->d_q8_qs);
-        lin(h->d_xb, h->d_wv[l], h->q6k_wv[l], vptr, kv_dim, dim, 0, h->d_q8_dx, h->d_q8_qs);
+        lin(h->d_xb, h->d_wk[l], h->q6k_wk[l], kptr, kv_dim, dim, 0, h->d_q8_dx, h->d_q8_qs, h->regime, h->d_q8_bsums);
+        lin(h->d_xb, h->d_wv[l], h->q6k_wv[l], vptr, kv_dim, dim, 0, h->d_q8_dx, h->d_q8_qs, h->regime, h->d_q8_bsums);
         // optional QKV bias (Qwen2), after projection and BEFORE rope/cache-use
         if (h->d_bq[l]) k_add_bias<<<(h->q_out + 255) / 256, 256>>>(h->d_q, h->d_bq[l], h->q_out);
         if (h->d_bk[l]) k_add_bias<<<(kv_dim + 255) / 256, 256>>>(kptr, h->d_bk[l], kv_dim);
@@ -715,17 +775,17 @@ extern "C" int vt_cuda_step(VtCuda* h, const float* x_embed, unsigned pos, const
             k_rope<<<(n_kv + 63) / 64, 64>>>(kptr, h->d_cos, h->d_sin, kptr, 1, n_kv, head_size);
         }
         k_attention<<<(n_heads + 63) / 64, 64>>>(h->d_q, h->d_keyc[l], h->d_valc[l], h->d_att, n_heads, head_size, kv_dim, c->kv_mul, pos);
-        lin(h->d_att, h->d_wo[l], h->q6k_wo[l], h->d_x, dim, dim, 1, h->d_q8_dx, h->d_q8_qs);                 // wo + residual
+        lin(h->d_att, h->d_wo[l], h->q6k_wo[l], h->d_x, dim, dim, 1, h->d_q8_dx, h->d_q8_qs, h->regime, h->d_q8_bsums);                 // wo + residual
         k_rms<<<1, 64>>>(h->d_x, h->d_rms_ffn[l], h->d_xb, dim, 1, c->rms_eps);
-        lin(h->d_xb, h->d_w1[l], h->q6k_w1[l], h->d_gate, hidden, dim, 0, h->d_q8_dx, h->d_q8_qs);
-        lin(h->d_xb, h->d_w3[l], h->q6k_w3[l], h->d_up, hidden, dim, 0, h->d_q8_dx, h->d_q8_qs);
+        lin(h->d_xb, h->d_w1[l], h->q6k_w1[l], h->d_gate, hidden, dim, 0, h->d_q8_dx, h->d_q8_qs, h->regime, h->d_q8_bsums);
+        lin(h->d_xb, h->d_w3[l], h->q6k_w3[l], h->d_up, hidden, dim, 0, h->d_q8_dx, h->d_q8_qs, h->regime, h->d_q8_bsums);
         k_silu_mul<<<(hidden + 255) / 256, 256>>>(h->d_gate, h->d_up, h->d_inner, hidden);
-        lin(h->d_inner, h->d_w2[l], h->q6k_w2[l], h->d_x, dim, hidden, 1, h->d_q8_dx, h->d_q8_qs);            // w2 + residual
+        lin(h->d_inner, h->d_w2[l], h->q6k_w2[l], h->d_x, dim, hidden, 1, h->d_q8_dx, h->d_q8_qs, h->regime, h->d_q8_bsums);            // w2 + residual
         if (dbg && l <= 1) { char t[32]; snprintf(t, 32, "after layer %d", l); l1(t, h->d_x, dim); }
     }
     k_rms<<<1, 64>>>(h->d_x, h->d_rms_final, h->d_xb, dim, 1, c->rms_eps);
     if (dbg) l1("final rms xb", h->d_xb, dim);
-    lin(h->d_xb, h->d_wcls, h->wcls_q6k, h->d_logits, c->vocab, dim, 0, h->d_q8_dx, h->d_q8_qs);
+    lin(h->d_xb, h->d_wcls, h->wcls_q6k, h->d_logits, c->vocab, dim, 0, h->d_q8_dx, h->d_q8_qs, h->regime, h->d_q8_bsums);
     if (dbg) l1("logits", h->d_logits, c->vocab);
     cudaError_t e = cudaDeviceSynchronize();
     if (e != cudaSuccess) return (int)e;
@@ -744,7 +804,7 @@ extern "C" int vt_cuda_test_linear(int kind, int K, int M, const float* x, const
     if (cudaMalloc(&q8qs, (size_t)((K / 256 > 0 ? K / 256 : 1)) * 256) != cudaSuccess) err = 1;
     if (err) return -1;
     for (int it = 0; it < (iters < 1 ? 1 : iters); it++)
-        lin(dx, dw, kind, dout, M, K, 0, q8dx, q8qs);   // Q6_K uses quantize-once scratch
+        lin(dx, dw, kind, dout, M, K, 0, q8dx, q8qs, 2, nullptr);   // regime-2 isolation test
     if (cudaDeviceSynchronize() != cudaSuccess) return -2;
     cudaMemcpy(out, dout, (size_t)M * 4, cudaMemcpyDeviceToHost);
     cudaFree(dx); cudaFree(dw); cudaFree(dout); cudaFree(q8dx); cudaFree(q8qs);
