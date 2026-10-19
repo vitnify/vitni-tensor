@@ -9,6 +9,9 @@ inputs produce the **same output bits on different CPUs**, across vendors and
 instruction sets, by fixing reduction order in floating point and doing k-quant
 matmuls in exact integers. It runs stock GGUF models and emits a `vitnify-receipt v2`
 model-computation digest that binds the numerical regime (`vitni-regime-2`) for every run.
+The same digest is reproduced **across GPU vendors too** — separate host backends
+([`cuda/`](cuda) for NVIDIA, Metal for Apple) run the full forward on the GPU and emit a
+byte-identical certificate. See [docs/regimes.md](docs/regimes.md) for the two numeric regimes.
 
 vitni-tensor is the deterministic engine under [vitnify](https://vitnify.com),
 the execution-receipt layer for AI agents.
@@ -46,6 +49,11 @@ path, so a run can be **reproduced bit-for-bit** by an independent party and cer
 - Quantized matmul kernels: **F32 · Q4_0 · Q4_K · Q5_0 · Q6_K · Q8_0**.
 - Pinned-order fp32 dot + exact-integer k-quant dots; deterministic `libm` transcendentals.
 - A per-run **`vitnify-receipt v2`** model-computation digest (BLAKE3), binding the numerical regime.
+- **GPU backends** (separate host crates that reproduce the CPU's digest bit-for-bit): Apple
+  Metal and NVIDIA CUDA ([`cuda/`](cuda), sm_75+). Two numeric regimes — `vitni-regime-2`
+  (shipped, anchored, float activations) and `regime-3` (reserved, int8 activations for
+  deterministic integer-tensor-core throughput). Both deterministic; see
+  [docs/regimes.md](docs/regimes.md).
 
 ## The receipt binary
 
@@ -70,8 +78,9 @@ VITNI_GGUF=model.gguf cargo test --release --test tinyllama_gguf -- --ignored --
 
 Across TinyLlama-1.1B, Mistral-7B, and Qwen2.5 on Apple, Arm/AWS Graviton, Intel, and
 AMD (two ISAs, two compiler builds), the same run produces a byte-identical certificate
-digest. Details in the paper, *Reconstructable Execution Certificates for Tool-Using AI
-Agents*.
+digest. The NVIDIA CUDA and Apple Metal backends reproduce that **same** digest on-GPU
+(regime-2), extending the claim across vendors and CPU↔GPU. Details in the paper,
+*Reconstructable Execution Certificates for Tool-Using AI Agents*.
 
 ## Cite
 

@@ -3,6 +3,35 @@
 All notable changes to `vitni-tensor` are documented here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+**GPU backends + a second numeric regime. No published digest moves: regime-2 is unchanged and
+every addition is either bit-identical to the published anchors or explicitly reserved.**
+
+- **NVIDIA CUDA backend** (`cuda/` crate, `vitni-tensor-cuda`) — the full quantized forward on an
+  NVIDIA GPU, **bit-identical to the CPU engine** (regime-2): validated cert-for-cert on
+  Mistral-7B, TinyLlama-1.1B, and Qwen2.5-0.5B/32B across Tesla T4 (sm_75) and A10G (sm_86). With
+  the existing Metal backend this extends the determinism claim across GPU vendors and CPU↔GPU.
+- **Batched prefill forward** — processes all `P` prompt tokens together (weights staged once;
+  batched attention/RoPE/bias; output head computed for the last position only; tiled Q6_K GEMM).
+  Bit-identical certificate to the per-token path; large prefill speedups measured on an A10G
+  (TinyLlama 26.9×, Qwen2.5-7B 24.9× vs per-token).
+- **`regime-3` (reserved, opt-in)** — the k-quant linears (Q4_K/Q6_K) in exact integers with int8
+  activations and a fixed-order running-sum combine. Deterministic and bit-identical CPU↔CUDA; it
+  is the path that runs on integer **tensor cores** (where float cannot be deterministic). GPU
+  kernel progression, all bit-identical: wide-WMMA → `mma.sync m16n8k32` → `cp.async`
+  double-buffer (up to ~3.4× the `__dp4a` kernel on an A10G). **Reserved:** the bound `REGIME`
+  string is still `vitni-regime-2` and there are no regime-3 anchors — promoting it is a
+  deliberate, versioned re-anchor. Entry points `inference::run_quantized_regime3` and the
+  backend's `new_regime(…, 3)`. See [`docs/regimes.md`](docs/regimes.md).
+- **Fixed** (batched prefill): the dtype dispatch treated the weight kind as a boolean, routing
+  Q8_0/Q5_0 tensors (e.g. Qwen's output head) to the Q6_K kernel and corrupting them — surfaced
+  only on models with a non-Q4_K/Q6_K linear (Qwen2.5). Now dispatches the real dtype.
+- **Engine:** `run_quantized_regime3` (CPU regime-3 reference) and `run_quantized_with_prefill`
+  (batched-prefill driver), both certificate-transparent.
+- **Docs:** [`docs/regimes.md`](docs/regimes.md) (the two-regime model + when to use each) and
+  [`docs/cuda-benchmark.md`](docs/cuda-benchmark.md) (GPU determinism validation + throughput).
+
 ## [0.2.2] — 2026-10-16
 
 **Fix (`std-parallel`): Q4_K ran a different, lossy kernel than the default build.**
