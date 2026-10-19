@@ -75,8 +75,10 @@ kernel void q8_quant(
     device const float* xb = x + s * 256u;
     float amax = 0.0f;
     for (uint i = 0u; i < 256u; i++) { float a = fabs(xb[i]); if (a > amax) amax = a; }
-    float dx = div_sw(amax, 127.0f);
-    float inv = (dx != 0.0f) ? div_sw(1.0f, dx) : 0.0f;
+    // IEEE divide (fast-math off) — matches the CPU quantize_block_q8 (`amax/127`, `1/d`)
+    // bit-for-bit. (div_sw differs by ~1 ULP for some amax; fixed_tree hid it, running-sum didn't.)
+    float dx = amax / 127.0f;
+    float inv = (dx != 0.0f) ? (1.0f / dx) : 0.0f;
     out_dx[s] = dx;
     device char* qo = out_qs + s * 256u;
     device int*  bs = out_bs + s * 8u;
@@ -110,8 +112,12 @@ static inline float q4k_q8_part(float d_x, device const char* xq, device const i
         acc   += (int)s1 * s_lo + (int)s2 * s_hi;
         acc_m += (int)m1 * bsums[hf * 2u] + (int)m2 * bsums[hf * 2u + 1u];
     }
-    float a1 = d * d_x, a2 = dmin * d_x;      // separate rounding (fast-math off)
-    return a1 * (float)acc - a2 * (float)acc_m;
+    float a1 = d * d_x, a2 = dmin * d_x;
+    // volatile forces separate rounding of the two products so the compiler can't contract
+    // `a1*acc - a2*acc_m` into an FMA (which rounds differently than the CPU's separate ops).
+    volatile float t1 = a1 * (float)acc;
+    volatile float t2 = a2 * (float)acc_m;
+    return t1 - t2;
 }
 
 // One Q6_K super-block × a Q8 x-block, exact integer — matches q6k_q8_part.

@@ -201,6 +201,34 @@ kernel void rope_apply(
     }
 }
 
+// NeoX RoPE (Qwen2): rotate split-halves (j, j + head_dim/2) rather than adjacent
+// pairs. Same cos/sin cache as rope_apply; only the pairing differs. Bit-identical
+// to the CPU rope_neox branch (separate-rounding mul/sub via volatile).
+kernel void rope_apply_neox(
+    device const float* x    [[buffer(0)]],
+    device const float* cosc [[buffer(1)]],
+    device const float* sinc [[buffer(2)]],
+    device       float* out  [[buffer(3)]],
+    constant     uint*  dims [[buffer(4)]],  // {seq, n_heads, head_dim}
+    uint gid [[thread_position_in_grid]])
+{
+    uint seq = dims[0], n_heads = dims[1], head_dim = dims[2];
+    if (gid >= seq * n_heads) return;
+    uint s = gid / n_heads;
+    uint hd = head_dim / 2u;
+    uint head_off = gid * head_dim;
+    for (uint j = 0u; j < hd; j++) {
+        float a = x[head_off + j];
+        float b = x[head_off + j + hd];
+        float c = cosc[s * hd + j];
+        float sn = sinc[s * hd + j];
+        volatile float p1 = a * c; volatile float p2 = b * sn;
+        out[head_off + j] = p1 - p2;
+        volatile float p3 = a * sn; volatile float p4 = b * c;
+        out[head_off + j + hd] = p3 + p4;
+    }
+}
+
 // Multi-head attention with KV cache, one thread per query head. Matches the
 // CPU forward's CANONICAL reductions (regime-2): Q.K via canonical_dot over
 // head_size, /sqrt(head_size), canonical-sum softmax, and A.V as a canonical

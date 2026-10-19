@@ -51,12 +51,20 @@ fn pipeline(device: &Device, src: &str, func: &str) -> Result<ComputePipelineSta
 }
 
 /// A quantized weight matrix resident on the GPU. `n` = output rows, `k` = input.
-struct WBuf { buf: Buffer, is_q6k: bool, n: usize, k: usize }
+/// `kind`: 0 = Q4_K, 1 = Q6_K, 2 = Q8_0, 3 = Q5_0 (the dtypes these models' linears use).
+struct WBuf { buf: Buffer, kind: u8, n: usize, k: usize }
+
+/// Map a weight tensor's GGUF dtype to a WBuf `kind`. Unknown dtypes fall back to 0
+/// (Q4_K); the models in scope (TinyLlama, Mistral, Qwen2.5) only use 0–3.
+fn dtype_kind(dtype_dbg: &str) -> u8 {
+    match dtype_dbg { "Q6_K" => 1, "Q8_0" => 2, "Q5_0" => 3, _ => 0 }
+}
 
 const Q4K: &str = include_str!("../../kernels/q4k.metal");
 const Q6K_INT: &str = include_str!("../../kernels/q6k_int.metal");
 const FWD: &str = include_str!("../../kernels/forward_ops.metal");
 const REGIME3: &str = include_str!("../../kernels/regime3.metal");
+const DTYPES: &str = include_str!("../../kernels/dtypes.metal");
 
 /// A quantized Llama-2 model resident on the Apple GPU.
 pub struct MetalForward {
@@ -72,7 +80,14 @@ pub struct MetalForward {
     pl_silu_mul: ComputePipelineState,
     pl_add: ComputePipelineState,
     pl_rope: ComputePipelineState,
+    pl_rope_neox: ComputePipelineState,   // Qwen2 split-half RoPE
     pl_attn: ComputePipelineState,
+    rope_neox: bool,                      // true = NeoX (Qwen2), false = interleaved (Llama)
+    // Q8_0 / Q5_0 linears (dequant row + canonical dot) — regime-independent
+    pl_q8_0: ComputePipelineState,
+    pl_q8_0_acc: ComputePipelineState,
+    pl_q5_0: ComputePipelineState,
+    pl_q5_0_acc: ComputePipelineState,
     // regime-3 (reserved): integer-activation k-quant linears + running-sum combine
     pl_q8_quant: ComputePipelineState,
     pl_q4k_rs: ComputePipelineState,
@@ -93,7 +108,10 @@ pub struct MetalForward {
     rope_theta: f32,
 
     // weights
-    embed: WBuf,
+    // Embedding lookup is dequantized on the HOST (per token, any dtype) — matches the
+    // CPU `embedding_row` bit-for-bit, so it works for Q4_K/Q6_K/Q8_0/Q5_0/Q4_0/F32 embeds.
+    embed_host: Vec<u8>,
+    embed_dtype: String,
     wcls: WBuf,
     rms_final: Buffer,
     l_rms_att: Vec<Buffer>,
@@ -101,6 +119,10 @@ pub struct MetalForward {
     l_wq: Vec<WBuf>,
     l_wk: Vec<WBuf>,
     l_wv: Vec<WBuf>,
+    // optional QKV projection biases (Qwen2) as f32 device buffers; None for Llama
+    l_bq: Vec<Option<Buffer>>,
+    l_bk: Vec<Option<Buffer>>,
+    l_bv: Vec<Option<Buffer>>,
     l_wo: Vec<WBuf>,
     l_w1: Vec<WBuf>,
     l_w2: Vec<WBuf>,
@@ -149,8 +171,7 @@ impl MetalForward {
         // sizes (TinyLlama agreed by luck; Mistral-7B did not). Keeping weights
         // quantized also avoids the f32 memory blow-up.
         let mkw = |t: &QuantTensor, n: usize, k: usize| {
-            let is_q6k = format!("{:?}", t.dtype) == "Q6_K";
-            WBuf { buf: ubuf(t.bytes), is_q6k, n, k }
+            WBuf { buf: ubuf(t.bytes), kind: dtype_kind(&format!("{:?}", t.dtype)), n, k }
         };
 
         let dim = cfg.dim;
@@ -173,7 +194,13 @@ impl MetalForward {
             pl_silu_mul: pipeline(&device, FWD, "silu_mul")?,
             pl_add: pipeline(&device, FWD, "add_inplace")?,
             pl_rope: pipeline(&device, FWD, "rope_apply")?,
+            pl_rope_neox: pipeline(&device, FWD, "rope_apply_neox")?,
+            rope_neox: w.rope_neox,
             pl_attn: pipeline(&device, FWD, "attention")?,
+            pl_q8_0: pipeline(&device, DTYPES, "q8_0_linear")?,
+            pl_q8_0_acc: pipeline(&device, DTYPES, "q8_0_linear_acc")?,
+            pl_q5_0: pipeline(&device, DTYPES, "q5_0_linear")?,
+            pl_q5_0_acc: pipeline(&device, DTYPES, "q5_0_linear_acc")?,
             pl_q8_quant: pipeline(&device, REGIME3, "q8_quant")?,
             pl_q4k_rs: pipeline(&device, REGIME3, "q4k_integer_rs")?,
             pl_q4k_rs_acc: pipeline(&device, REGIME3, "q4k_integer_rs_acc")?,
@@ -183,8 +210,9 @@ impl MetalForward {
             dim, hidden, n_layers,
             n_heads: cfg.n_heads, kv_dim, kv_mul: cfg.kv_mul(), head_size,
             vocab, rms_eps: w.rms_eps, rope_theta: w.rope_theta,
-            // embedding stays QUANTIZED — the lookup dequantizes one row per token.
-            embed: WBuf { buf: ubuf(w.token_embedding_table.bytes), is_q6k: false, n: vocab, k: dim },
+            // embedding kept on the HOST — the lookup dequantizes one row per token for any dtype.
+            embed_host: w.token_embedding_table.bytes.to_vec(),
+            embed_dtype: format!("{:?}", w.token_embedding_table.dtype),
             wcls: match &w.wcls { Some(c) => mkw(c, vocab, dim), None => mkw(&w.token_embedding_table, vocab, dim) },
             rms_final: fbuf(w.rms_final_weight),
             l_rms_att: w.layers.iter().map(|l| fbuf(l.rms_att_weight)).collect(),
@@ -192,6 +220,9 @@ impl MetalForward {
             l_wq: w.layers.iter().map(|l| mkw(&l.wq, q_out, dim)).collect(),
             l_wk: w.layers.iter().map(|l| mkw(&l.wk, kv_dim, dim)).collect(),
             l_wv: w.layers.iter().map(|l| mkw(&l.wv, kv_dim, dim)).collect(),
+            l_bq: w.layers.iter().map(|l| l.bq.map(|b| fbuf(b))).collect(),
+            l_bk: w.layers.iter().map(|l| l.bk.map(|b| fbuf(b))).collect(),
+            l_bv: w.layers.iter().map(|l| l.bv.map(|b| fbuf(b))).collect(),
             l_wo: w.layers.iter().map(|l| mkw(&l.wo, dim, dim)).collect(),
             l_w1: w.layers.iter().map(|l| mkw(&l.w1, hidden, dim)).collect(),
             l_w2: w.layers.iter().map(|l| mkw(&l.w2, dim, hidden)).collect(),
@@ -212,6 +243,52 @@ impl MetalForward {
     /// integer-activation k-quant linears with running-sum combine (bit-identical to the
     /// CPU `run_quantized_regime3`). Only changes how Q4_K/Q6_K linears are computed.
     pub fn set_regime(&mut self, regime: u8) { self.regime = regime; }
+
+    /// Debug: run ONLY the layer's w2 (ffn_down) linear on `x` (hidden-dim) under the
+    /// current regime, returning the dim-length output. Isolates one linear for testing.
+    pub fn debug_w2(&mut self, x: &[f32], layer: usize) -> Vec<f32> {
+        write_buf(&self.b_inner, x);
+        let z = vec![0.0f32; self.dim];
+        write_buf(&self.b_tmp_dim, &z);
+        let cmd = self.queue.new_command_buffer();
+        let e = cmd.new_compute_command_encoder();
+        self.lin(e, &self.b_inner, 0, &self.l_w2[layer], &self.b_tmp_dim, 0);
+        e.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        unsafe { std::slice::from_raw_parts(self.b_tmp_dim.contents() as *const f32, self.dim) }.to_vec()
+    }
+
+    /// Debug: w2 with accumulation — out = residual + (w2 . x), the form the forward uses.
+    pub fn debug_w2_acc(&mut self, x: &[f32], residual: &[f32], layer: usize) -> Vec<f32> {
+        write_buf(&self.b_inner, x);
+        write_buf(&self.b_tmp_dim, residual);
+        let cmd = self.queue.new_command_buffer();
+        let e = cmd.new_compute_command_encoder();
+        self.lin_acc(e, &self.b_inner, 0, &self.l_w2[layer], &self.b_tmp_dim, 0);
+        e.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        unsafe { std::slice::from_raw_parts(self.b_tmp_dim.contents() as *const f32, self.dim) }.to_vec()
+    }
+
+    /// Dequantize one embedding row on the host (any quant type), matching the CPU
+    /// `embedding_row` bit-for-bit — so Q8_0/Q5_0/Q6_K/Q4_K/Q4_0/F32 embeddings all work.
+    fn embed_row(&self, token: usize) -> Vec<f32> {
+        use vitni_tensor::ops::quant::{dequantize_q4_0, dequantize_q4_k, dequantize_q5_0, dequantize_q6_k, dequantize_q8_0};
+        let dim = self.dim;
+        let b = &self.embed_host;
+        let slice = |rb: usize| -> &[u8] { &b[token * rb..(token + 1) * rb] };
+        match self.embed_dtype.as_str() {
+            "F32" => { let off = token * dim * 4; (0..dim).map(|i| f32::from_le_bytes([b[off + i * 4], b[off + i * 4 + 1], b[off + i * 4 + 2], b[off + i * 4 + 3]])).collect() }
+            "Q4_0" => dequantize_q4_0(slice((dim / 32) * 18)).expect("q4_0 embed row"),
+            "Q8_0" => dequantize_q8_0(slice((dim / 32) * 34)).expect("q8_0 embed row"),
+            "Q5_0" => dequantize_q5_0(slice((dim / 32) * 22)).expect("q5_0 embed row"),
+            "Q4_K" => dequantize_q4_k(slice((dim / 256) * 144)).expect("q4_k embed row"),
+            "Q6_K" => dequantize_q6_k(slice((dim / 256) * 210)).expect("q6_k embed row"),
+            other => panic!("metal: unsupported embedding dtype {other}"),
+        }
+    }
 
     /// Clear the KV cache to start a fresh sequence.
     pub fn reset(&mut self) {
@@ -243,12 +320,21 @@ impl MetalForward {
     fn lin(&self, e: &metal::ComputeCommandEncoderRef, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
         let nsuper = wt.k / 256;
         let dims = [wt.k as u32, wt.n as u32, nsuper as u32];
+        // Q8_0 / Q5_0: dequant each row + canonical dot (regime-independent).
+        if wt.kind == 2 {
+            self.disp(e, &self.pl_q8_0, &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)], &[(3, bytes(&dims))], wt.n);
+            return;
+        }
+        if wt.kind == 3 {
+            self.disp(e, &self.pl_q5_0, &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)], &[(3, bytes(&dims))], wt.n);
+            return;
+        }
         if self.regime == 3 {
             self.disp(e, &self.pl_q8_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0), (3, &self.b_q8_bsums, 0)],
                 &[(4, bytes(&[nsuper as u32]))], nsuper);
             self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs, &self.b_q8_bsums]);
-            if wt.is_q6k {
+            if wt.kind == 1 {
                 self.disp(e, &self.pl_q6k_rs,
                     &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
                     &[(4, bytes(&dims))], wt.n);
@@ -259,7 +345,7 @@ impl MetalForward {
             }
             return;
         }
-        if wt.is_q6k {
+        if wt.kind == 1 {
             self.disp(e, &self.pl_q6k_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0)],
                 &[(3, bytes(&[nsuper as u32]))], nsuper);
@@ -280,12 +366,20 @@ impl MetalForward {
     fn lin_acc(&self, e: &metal::ComputeCommandEncoderRef, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
         let nsuper = wt.k / 256;
         let dims = [wt.k as u32, wt.n as u32, nsuper as u32];
+        if wt.kind == 2 {
+            self.disp(e, &self.pl_q8_0_acc, &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)], &[(3, bytes(&dims))], wt.n);
+            return;
+        }
+        if wt.kind == 3 {
+            self.disp(e, &self.pl_q5_0_acc, &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)], &[(3, bytes(&dims))], wt.n);
+            return;
+        }
         if self.regime == 3 {
             self.disp(e, &self.pl_q8_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0), (3, &self.b_q8_bsums, 0)],
                 &[(4, bytes(&[nsuper as u32]))], nsuper);
             self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs, &self.b_q8_bsums]);
-            if wt.is_q6k {
+            if wt.kind == 1 {
                 self.disp(e, &self.pl_q6k_rs_acc,
                     &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
                     &[(4, bytes(&dims))], wt.n);
@@ -296,7 +390,7 @@ impl MetalForward {
             }
             return;
         }
-        if wt.is_q6k {
+        if wt.kind == 1 {
             self.disp(e, &self.pl_q6k_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0)],
                 &[(3, bytes(&[nsuper as u32]))], nsuper);
@@ -329,6 +423,9 @@ impl MetalForward {
         let (c, s) = self.rope_cache(pos);
         write_buf(&self.b_cos, &c);
         write_buf(&self.b_sin, &s);
+        // embedding(token) -> b_x, dequantized on the host (any dtype), bit-for-bit == CPU.
+        let erow = self.embed_row(token as usize);
+        write_buf(&self.b_x, &erow);
 
         let dim = self.dim;
         let kv_dim = self.kv_dim;
@@ -342,13 +439,6 @@ impl MetalForward {
         let cmd = self.queue.new_command_buffer();
         let e = cmd.new_compute_command_encoder();
 
-        // embedding(token) -> b_x
-        let nsuper_e = self.dim / 256;
-        self.disp(e, &self.pl_q4k_dequant,
-            &[(0, &self.embed.buf, (token as usize * nsuper_e * 144) as u64), (1, &self.b_x, 0)],
-            &[(2, bytes(&[nsuper_e as u32]))], nsuper_e);
-        self.barr(e, &[&self.b_x]);
-
         for layer in 0..self.n_layers {
             self.disp(e, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.l_rms_att[layer], 0), (2, &self.b_xb, 0)],
                 &[(3, bytes(&feat_rows)), (4, bytes(&eps))], 1);
@@ -358,10 +448,19 @@ impl MetalForward {
             self.lin(e, &self.b_xb, 0, &self.l_wk[layer], &self.key_cache[layer], koff);
             self.lin(e, &self.b_xb, 0, &self.l_wv[layer], &self.value_cache[layer], koff);
             self.barr(e, &[&self.b_q, &self.key_cache[layer], &self.value_cache[layer]]);
-            self.disp(e, &self.pl_rope, &[(0, &self.b_q, 0), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.b_q, 0)],
+            // optional QKV bias (Qwen2): q/k/v += bias, after projection and BEFORE rope.
+            if self.l_bq[layer].is_some() {
+                let qo = self.n_heads * head_size;
+                self.disp(e, &self.pl_add, &[(0, &self.b_q, 0), (1, self.l_bq[layer].as_ref().unwrap(), 0)], &[(2, bytes(&[qo as u32]))], qo);
+                self.disp(e, &self.pl_add, &[(0, &self.key_cache[layer], koff), (1, self.l_bk[layer].as_ref().unwrap(), 0)], &[(2, bytes(&[kv_dim as u32]))], kv_dim);
+                self.disp(e, &self.pl_add, &[(0, &self.value_cache[layer], koff), (1, self.l_bv[layer].as_ref().unwrap(), 0)], &[(2, bytes(&[kv_dim as u32]))], kv_dim);
+                self.barr(e, &[&self.b_q, &self.key_cache[layer], &self.value_cache[layer]]);
+            }
+            let rope = if self.rope_neox { &self.pl_rope_neox } else { &self.pl_rope };
+            self.disp(e, rope, &[(0, &self.b_q, 0), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.b_q, 0)],
                 &[(4, bytes(&[1u32, self.n_heads as u32, head_size as u32]))], self.n_heads);
             let n_kv = kv_dim / head_size;
-            self.disp(e, &self.pl_rope, &[(0, &self.key_cache[layer], koff), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.key_cache[layer], koff)],
+            self.disp(e, rope, &[(0, &self.key_cache[layer], koff), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.key_cache[layer], koff)],
                 &[(4, bytes(&[1u32, n_kv as u32, head_size as u32]))], n_kv);
             self.barr(e, &[&self.b_q, &self.key_cache[layer]]);
             self.disp(e, &self.pl_attn,
@@ -499,6 +598,37 @@ mod tests {
 
         assert_eq!(cpu.generated_tokens, gpu.generated_tokens, "GPU generated different tokens");
         assert_eq!(cpu.cert.digest, gpu.cert.digest, "GPU certificate digest differs from CPU");
+    }
+
+    /// Isolate the w2 (Q6_K) regime-3 linear: Metal `q8_quant + q6k_integer_rs` vs the CPU
+    /// `linear_q6_k_integer_rs`, on a controlled hidden-dim input. Pinpoints a per-linear diff.
+    #[test]
+    #[ignore = "needs a Q6_K-w2 model; set VITNI_GGUF (default: local Qwen2.5-0.5B)"]
+    fn metal_w2_q6k_rs_isolation() {
+        use vitni_tensor::ops::quant::linear_q6_k_integer_rs;
+        let path = std::env::var("VITNI_GGUF")
+            .unwrap_or_else(|_| "/Users/nickp/Downloads/vitnify_test/qwen2.5-0.5b-Q4_K_M.gguf".into());
+        let blob = std::fs::read(&path).expect("read gguf");
+        let gguf = GgufFile::parse(&blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        use vitni_tensor::ops::quant::linear_q4_k_integer_rs;
+        let k = cfg.hidden_dim; let m = cfg.dim;
+        let x: Vec<f32> = (0..k).map(|i| ((i as f32 * 0.6180339887).fract() - 0.5) * 2.0).collect();
+        let mut mf = MetalForward::new(&cfg, &weights).unwrap();
+        mf.set_regime(3);
+        let mut bad = 0usize;
+        for layer in 0..weights.layers.len() {
+            let w2 = &weights.layers[layer].w2;
+            let dt = format!("{:?}", w2.dtype);
+            let mut cpu = vec![0f32; m];
+            if dt == "Q6_K" { linear_q6_k_integer_rs(&x, w2.bytes, &mut cpu, 1, k, m).unwrap(); }
+            else { linear_q4_k_integer_rs(&x, w2.bytes, &mut cpu, 1, k, m).unwrap(); }
+            let gpu = mf.debug_w2(&x, layer);
+            let diffs = (0..m).filter(|&i| cpu[i].to_bits() != gpu[i].to_bits()).count();
+            if diffs > 0 { eprintln!("layer {} w2 {}: {}/{} diffs", layer, dt, diffs, m); bad += 1; }
+        }
+        assert_eq!(bad, 0, "some w2 regime-3 linears diverge from CPU (Q4_K/Q6_K integer-rs)");
     }
 
     /// Cross-vendor regime-3: the Apple Metal GPU, in the reserved integer-activation regime,
