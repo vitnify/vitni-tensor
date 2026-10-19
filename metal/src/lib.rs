@@ -555,7 +555,7 @@ mod tests {
         use std::time::Instant;
         use vitni_tensor::model::{forward::RunState, forward_quantized};
         let path = std::env::var("VITNI_GGUF")
-            .unwrap_or_else(|_| "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf".into());
+            .unwrap_or_else(|_| "tinyllama-Q4_K_M.gguf".into());
         let blob = std::fs::read(&path).expect("read gguf");
         let gguf = GgufFile::parse(&blob).unwrap();
         let cfg = Config::from_gguf(&gguf).unwrap();
@@ -584,7 +584,7 @@ mod tests {
     #[ignore = "needs a model file; run with VITNI_GGUF set (default: the local TinyLlama)"]
     fn metal_certificate_matches_cpu() {
         let path = std::env::var("VITNI_GGUF")
-            .unwrap_or_else(|_| "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf".into());
+            .unwrap_or_else(|_| "tinyllama-Q4_K_M.gguf".into());
         let blob = std::fs::read(&path).expect("read gguf");
         let hash = *blake3::hash(&blob).as_bytes();
         let gguf = GgufFile::parse(&blob).unwrap();
@@ -607,7 +607,7 @@ mod tests {
     fn metal_w2_q6k_rs_isolation() {
         use vitni_tensor::ops::quant::linear_q6_k_integer_rs;
         let path = std::env::var("VITNI_GGUF")
-            .unwrap_or_else(|_| "/Users/nickp/Downloads/vitnify_test/qwen2.5-0.5b-Q4_K_M.gguf".into());
+            .unwrap_or_else(|_| "qwen2.5-0.5b-Q4_K_M.gguf".into());
         let blob = std::fs::read(&path).expect("read gguf");
         let gguf = GgufFile::parse(&blob).unwrap();
         let cfg = Config::from_gguf(&gguf).unwrap();
@@ -639,7 +639,7 @@ mod tests {
     #[ignore = "needs a model file; run with VITNI_GGUF set (default: the local TinyLlama)"]
     fn metal_regime3_matches_cpu() {
         let path = std::env::var("VITNI_GGUF")
-            .unwrap_or_else(|_| "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf".into());
+            .unwrap_or_else(|_| "tinyllama-Q4_K_M.gguf".into());
         let blob = std::fs::read(&path).expect("read gguf");
         let hash = *blake3::hash(&blob).as_bytes();
         let gguf = GgufFile::parse(&blob).unwrap();

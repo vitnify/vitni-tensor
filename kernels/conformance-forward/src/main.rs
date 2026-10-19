@@ -25,7 +25,8 @@ fn argmax_i(v: &[f32]) -> usize {
 fn dump_golden(path: &str) {
     use std::io::Write;
     use vitni_tensor::model::{config::Config, gguf::GgufFile, quant_weights::QuantizedWeights};
-    let blob = std::fs::read("/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf").unwrap();
+    let model = std::env::var("VITNI_GGUF_TINYLLAMA").unwrap_or_else(|_| "tinyllama-Q4_K_M.gguf".to_string());
+    let blob = std::fs::read(&model).unwrap();
     let gguf = GgufFile::parse(&blob).unwrap();
     let cfg = Config::from_gguf(&gguf).unwrap();
     let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
@@ -120,8 +121,8 @@ fn dump_golden(path: &str) {
 
 fn end_to_end() {
     use vitni_tensor::model::{config::Config, forward::RunState, forward_quantized, gguf::GgufFile, quant_weights::QuantizedWeights};
-    let path = "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf";
-    let blob = std::fs::read(path).expect("read gguf");
+    let path = std::env::var("VITNI_GGUF_TINYLLAMA").unwrap_or_else(|_| "tinyllama-Q4_K_M.gguf".to_string());
+    let blob = std::fs::read(&path).expect("read gguf");
     let gguf = GgufFile::parse(&blob).unwrap();
     let cfg = Config::from_gguf(&gguf).unwrap();
     let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
@@ -887,8 +888,8 @@ fn build_inputs() -> Vec<f32> {
 
 fn dump_gguf_types() {
     use vitni_tensor::model::{config::Config, gguf::GgufFile, quant_weights::{QuantTensor, QuantizedWeights}};
-    let path = "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf";
-    let blob = std::fs::read(path).expect("read gguf");
+    let path = std::env::var("VITNI_GGUF_TINYLLAMA").unwrap_or_else(|_| "tinyllama-Q4_K_M.gguf".to_string());
+    let blob = std::fs::read(&path).expect("read gguf");
     let gguf = GgufFile::parse(&blob).unwrap();
     let cfg = Config::from_gguf(&gguf).unwrap();
     let w = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();

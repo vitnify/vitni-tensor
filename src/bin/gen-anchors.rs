@@ -71,9 +71,9 @@ fn main() {
     let prompt: Vec<u32> = vec![1, 9038, 2501, 263, 931, 29892];
     let n_new = 20usize;
     let models: &[(&str, &str, &str)] = &[
-        ("tinyllama-1.1b-Q4_K_M", "VITNI_GGUF_TINYLLAMA", "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf"),
-        ("mistral-7b-Q4_K_M", "VITNI_GGUF_MISTRAL", "/Users/nickp/models/mistral-7b-v0.1.Q4_K_M.gguf"),
-        ("qwen2.5-0.5b-Q4_K_M", "VITNI_GGUF_QWEN", "/Users/nickp/.cache/huggingface/hub/models--Qwen--Qwen2.5-0.5B-Instruct-GGUF/snapshots/9217f5db79a29953eb74d5343926648285ec7e67/qwen2.5-0.5b-instruct-q4_k_m.gguf"),
+        ("tinyllama-1.1b-Q4_K_M", "VITNI_GGUF_TINYLLAMA", "tinyllama-Q4_K_M.gguf"),
+        ("mistral-7b-Q4_K_M", "VITNI_GGUF_MISTRAL", "mistral-7b-v0.1.Q4_K_M.gguf"),
+        ("qwen2.5-0.5b-Q4_K_M", "VITNI_GGUF_QWEN", "qwen2.5-0.5b-instruct-q4_k_m.gguf"),
     ];
 
     let mut model_lines: Vec<String> = Vec::new();
