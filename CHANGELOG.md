@@ -3,10 +3,11 @@
 All notable changes to `vitni-tensor` are documented here.
 This project follows [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [0.3.0] — 2026-10-18
 
 **GPU backends + a second numeric regime. No published digest moves: regime-2 is unchanged and
-every addition is either bit-identical to the published anchors or explicitly reserved.**
+every addition is either bit-identical to the published anchors or explicitly reserved.** New
+public API (`run_quantized_regime3`, `run_quantized_with_prefill`) → minor version bump.
 
 - **NVIDIA CUDA backend** (`cuda/` crate, `vitni-tensor-cuda`) — the full quantized forward on an
   NVIDIA GPU, **bit-identical to the CPU engine** (regime-2): validated cert-for-cert on
