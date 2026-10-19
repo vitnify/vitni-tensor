@@ -923,7 +923,11 @@ fn main() {
     forward_ops_conformance(include_str!("../../forward_ops.metal"));
     attention_conformance(include_str!("../../forward_ops.metal"));
     end_to_end();
-    dump_golden("/private/tmp/claude-501/-Users-nickp-Downloads-InVent/0e6ca708-7fd1-4d6f-ba6a-adf2b733a7a5/scratchpad/golden.bin");
+    // Opt-in dev tool: regenerate the golden conformance fixture only when asked,
+    // e.g. `VITNI_DUMP_GOLDEN=golden.bin`. Not run on a normal conformance pass.
+    if let Ok(golden) = std::env::var("VITNI_DUMP_GOLDEN") {
+        dump_golden(&golden);
+    }
 
     let inputs = build_inputs();
     println!("== expf conformance (Metal fast-math OFF vs libm::expf) ==");
