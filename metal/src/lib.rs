@@ -56,6 +56,7 @@ struct WBuf { buf: Buffer, is_q6k: bool, n: usize, k: usize }
 const Q4K: &str = include_str!("../../kernels/q4k.metal");
 const Q6K_INT: &str = include_str!("../../kernels/q6k_int.metal");
 const FWD: &str = include_str!("../../kernels/forward_ops.metal");
+const REGIME3: &str = include_str!("../../kernels/regime3.metal");
 
 /// A quantized Llama-2 model resident on the Apple GPU.
 pub struct MetalForward {
@@ -72,6 +73,13 @@ pub struct MetalForward {
     pl_add: ComputePipelineState,
     pl_rope: ComputePipelineState,
     pl_attn: ComputePipelineState,
+    // regime-3 (reserved): integer-activation k-quant linears + running-sum combine
+    pl_q8_quant: ComputePipelineState,
+    pl_q4k_rs: ComputePipelineState,
+    pl_q4k_rs_acc: ComputePipelineState,
+    pl_q6k_rs: ComputePipelineState,
+    pl_q6k_rs_acc: ComputePipelineState,
+    regime: u8,   // 2 = shipped float Q4_K + fixed_tree; 3 = integer + running-sum
 
     dim: usize,
     hidden: usize,
@@ -118,6 +126,7 @@ pub struct MetalForward {
     // by every output row of one linear.
     b_q8_dx: Buffer,
     b_q8_qs: Buffer,
+    b_q8_bsums: Buffer,   // regime-3: per-32-group int sums of the int8 activation
 }
 
 fn write_buf(buf: &Buffer, data: &[f32]) {
@@ -165,6 +174,12 @@ impl MetalForward {
             pl_add: pipeline(&device, FWD, "add_inplace")?,
             pl_rope: pipeline(&device, FWD, "rope_apply")?,
             pl_attn: pipeline(&device, FWD, "attention")?,
+            pl_q8_quant: pipeline(&device, REGIME3, "q8_quant")?,
+            pl_q4k_rs: pipeline(&device, REGIME3, "q4k_integer_rs")?,
+            pl_q4k_rs_acc: pipeline(&device, REGIME3, "q4k_integer_rs_acc")?,
+            pl_q6k_rs: pipeline(&device, REGIME3, "q6k_integer_rs")?,
+            pl_q6k_rs_acc: pipeline(&device, REGIME3, "q6k_integer_rs_acc")?,
+            regime: 2,
             dim, hidden, n_layers,
             n_heads: cfg.n_heads, kv_dim, kv_mul: cfg.kv_mul(), head_size,
             vocab, rms_eps: w.rms_eps, rope_theta: w.rope_theta,
@@ -188,9 +203,15 @@ impl MetalForward {
             b_logits: zbuf(vocab), b_cos: zbuf(head_size / 2), b_sin: zbuf(head_size / 2),
             b_q8_dx: zbuf(dim.max(hidden) / 256),
             b_q8_qs: device.new_buffer(((dim.max(hidden) / 256) * 256).max(4) as u64, shared),
+            b_q8_bsums: device.new_buffer((((dim.max(hidden) / 256) * 8) * 4).max(4) as u64, shared),
             device, queue,
         })
     }
+
+    /// Select the numeric regime: 2 = shipped (float Q4_K + fixed_tree), 3 = reserved
+    /// integer-activation k-quant linears with running-sum combine (bit-identical to the
+    /// CPU `run_quantized_regime3`). Only changes how Q4_K/Q6_K linears are computed.
+    pub fn set_regime(&mut self, regime: u8) { self.regime = regime; }
 
     /// Clear the KV cache to start a fresh sequence.
     pub fn reset(&mut self) {
@@ -222,6 +243,22 @@ impl MetalForward {
     fn lin(&self, e: &metal::ComputeCommandEncoderRef, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
         let nsuper = wt.k / 256;
         let dims = [wt.k as u32, wt.n as u32, nsuper as u32];
+        if self.regime == 3 {
+            self.disp(e, &self.pl_q8_quant,
+                &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0), (3, &self.b_q8_bsums, 0)],
+                &[(4, bytes(&[nsuper as u32]))], nsuper);
+            self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs, &self.b_q8_bsums]);
+            if wt.is_q6k {
+                self.disp(e, &self.pl_q6k_rs,
+                    &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
+                    &[(4, bytes(&dims))], wt.n);
+            } else {
+                self.disp(e, &self.pl_q4k_rs,
+                    &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &self.b_q8_bsums, 0), (3, &wt.buf, 0), (4, out_buf, out_off)],
+                    &[(5, bytes(&dims))], wt.n);
+            }
+            return;
+        }
         if wt.is_q6k {
             self.disp(e, &self.pl_q6k_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0)],
@@ -243,6 +280,22 @@ impl MetalForward {
     fn lin_acc(&self, e: &metal::ComputeCommandEncoderRef, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
         let nsuper = wt.k / 256;
         let dims = [wt.k as u32, wt.n as u32, nsuper as u32];
+        if self.regime == 3 {
+            self.disp(e, &self.pl_q8_quant,
+                &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0), (3, &self.b_q8_bsums, 0)],
+                &[(4, bytes(&[nsuper as u32]))], nsuper);
+            self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs, &self.b_q8_bsums]);
+            if wt.is_q6k {
+                self.disp(e, &self.pl_q6k_rs_acc,
+                    &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
+                    &[(4, bytes(&dims))], wt.n);
+            } else {
+                self.disp(e, &self.pl_q4k_rs_acc,
+                    &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &self.b_q8_bsums, 0), (3, &wt.buf, 0), (4, out_buf, out_off)],
+                    &[(5, bytes(&dims))], wt.n);
+            }
+            return;
+        }
         if wt.is_q6k {
             self.disp(e, &self.pl_q6k_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0)],
@@ -368,6 +421,29 @@ pub fn run_metal(
     Ok(outcome)
 }
 
+/// Run a full generation on the Apple GPU in **regime-3** (reserved: integer-activation
+/// k-quant linears + running-sum combine). Bit-identical to `inference::run_quantized_regime3`
+/// on CPU — the Apple-GPU half of the cross-vendor regime-3 proof (NVIDIA is the CUDA backend).
+pub fn run_metal_regime3(
+    cfg: &Config,
+    weights: &QuantizedWeights,
+    weights_hash: &[u8; 32],
+    req: &Request,
+) -> Result<Outcome, MetalError> {
+    let mut mf = MetalForward::new(cfg, weights)?;
+    mf.set_regime(3);
+    let vocab = cfg.vocab_size;
+    let (outcome, _id) = inference::run_quantized_with_forward(
+        cfg, weights_hash, req, &mut NullSink, 0,
+        |cur, pos| Tensor::from_f32(mf.step(cur, pos), Shape::new(&[vocab])?),
+    )
+    .map_err(|e| match e {
+        RunError::Inference(err) => MetalError::Engine(err),
+        RunError::Sink(_) => unreachable!("NullSink is infallible"),
+    })?;
+    Ok(outcome)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,6 +499,45 @@ mod tests {
 
         assert_eq!(cpu.generated_tokens, gpu.generated_tokens, "GPU generated different tokens");
         assert_eq!(cpu.cert.digest, gpu.cert.digest, "GPU certificate digest differs from CPU");
+    }
+
+    /// Cross-vendor regime-3: the Apple Metal GPU, in the reserved integer-activation regime,
+    /// reproduces the CPU `run_quantized_regime3` certificate bit-for-bit — the same regime-3
+    /// the NVIDIA CUDA backend reproduces. Also asserts regime-3 actually engages (its cert
+    /// differs from regime-2's when the integer activation flips the trajectory).
+    #[test]
+    #[ignore = "needs a model file; run with VITNI_GGUF set (default: the local TinyLlama)"]
+    fn metal_regime3_matches_cpu() {
+        let path = std::env::var("VITNI_GGUF")
+            .unwrap_or_else(|_| "/Users/nickp/Downloads/vitnify_test/tinyllama-Q4_K_M.gguf".into());
+        let blob = std::fs::read(&path).expect("read gguf");
+        let hash = *blake3::hash(&blob).as_bytes();
+        let gguf = GgufFile::parse(&blob).unwrap();
+        let cfg = Config::from_gguf(&gguf).unwrap();
+        let weights = QuantizedWeights::from_gguf(&gguf, &cfg).unwrap();
+        let prompt: Vec<u32> = vec![1, 9038, 2501, 263, 931, 29892];
+        let req = Request { model_id: "tinyllama-1.1b-chat-Q4_K_M", prompt_tokens: &prompt, n_new_tokens: 16 };
+
+        let cpu3 = inference::run_quantized_regime3(&cfg, &weights, &hash, &req).unwrap();
+        let gpu3 = run_metal_regime3(&cfg, &weights, &hash, &req).unwrap();
+        let cpu2 = inference::run_quantized(&cfg, &weights, &hash, &req).unwrap();
+        eprintln!("metal r3 {:02x?}  cpu r3 {:02x?}  (cpu r2 {:02x?})",
+            &gpu3.cert.digest[..4], &cpu3.cert.digest[..4], &cpu2.cert.digest[..4]);
+
+        // ENGAGEMENT (logits level): the Metal regime-3 kernels must actually change the
+        // computation vs regime-2 — otherwise a matching cert could be regime-2 in disguise,
+        // since the generated tokens can coincide. Compare step-0 logits on the same GPU.
+        let mut mf = MetalForward::new(&cfg, &weights).unwrap();
+        let l2 = mf.step(prompt[0], 0);
+        mf.reset();
+        mf.set_regime(3);
+        let l3 = mf.step(prompt[0], 0);
+        let diffs = l2.iter().zip(l3.iter()).filter(|(a, b)| a.to_bits() != b.to_bits()).count();
+        eprintln!("metal regime-3 engagement: {}/{} step-0 logits differ from regime-2", diffs, l2.len());
+        assert!(diffs > 0, "Metal regime-3 logits == regime-2 — integer kernels NOT engaged");
+
+        assert_eq!(cpu3.generated_tokens, gpu3.generated_tokens, "Metal regime-3 tokens differ from CPU regime-3");
+        assert_eq!(cpu3.cert.digest, gpu3.cert.digest, "Metal regime-3 cert differs from CPU regime-3");
     }
 
     /// Regression guard for a bug that only showed at LARGE matrix sizes. MetalForward
