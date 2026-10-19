@@ -17,6 +17,16 @@ GPU-backend work only (the `metal/` and `cuda/` crates + `kernels/`); the publis
   on an M3 Max: Qwen2.5-0.5B, TinyLlama, Mistral-7B all bit-identical to the CPU. See
   [`docs/regimes.md`](docs/regimes.md).
 
+## [0.3.1] — 2026-10-19
+
+Chore. **No engine behavior change, no digest move** — regime-2 and every anchor are
+byte-for-byte identical to 0.3.0.
+
+- Remove hardcoded personal (`/Users/nickp/…`) paths from source. The shipped
+  `gen-anchors` binary's per-model defaults now fall back to a neutral relative filename
+  when the documented `VITNI_GGUF_*` env vars are unset. The same cleanup was applied to
+  the unpublished `metal` and `conformance-forward` crates (test/helper paths).
+
 ## [0.3.0] — 2026-10-18
 
 **GPU backends + a second numeric regime. No published digest moves: regime-2 is unchanged and
