@@ -3,6 +3,20 @@
 All notable changes to `vitni-tensor` are documented here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [Unreleased] — backends & docs (no engine/published-crate change)
+
+GPU-backend work only (the `metal/` and `cuda/` crates + `kernels/`); the published
+`vitni-tensor` engine crate is unchanged since 0.3.0.
+
+- **CUDA**: wide-tile WMMA + `mma.sync m16n8k32` + `cp.async` Q4_K GEMM (~3.4× the dp4a
+  kernel), wired into the batched prefill; batched attention/RoPE/head/Q6_K. See
+  [`docs/cuda-benchmark.md`](docs/cuda-benchmark.md).
+- **Metal**: dtype-gap fix — Q8_0/Q5_0 linears, NeoX RoPE + QKV bias, host-side embedding —
+  so Qwen2.5 (and any Q8_0/Q5_0-mixed model) runs on Metal bit-identically. regime-3 added to
+  Metal, so **both regimes are now cross-vendor** (CPU / Apple Metal / NVIDIA CUDA), validated
+  on an M3 Max: Qwen2.5-0.5B, TinyLlama, Mistral-7B all bit-identical to the CPU. See
+  [`docs/regimes.md`](docs/regimes.md).
+
 ## [0.3.0] — 2026-10-18
 
 **GPU backends + a second numeric regime. No published digest moves: regime-2 is unchanged and

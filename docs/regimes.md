@@ -34,10 +34,10 @@ hierarchy — "which deterministic answer," not "deterministic vs not."
   cores** (WMMA / `mma.sync`), where float cannot be — float addition isn't associative, so
   float tensor cores diverge across hardware. Regime-3 is the deterministic high-throughput GPU
   path (see [cuda-benchmark.md](cuda-benchmark.md)).
-- **Determinism.** Bit-identical CPU ↔ CUDA (proven on T4 and A10G), and deterministic by
-  construction on any device implementing the same integer ops. Determinism is **not** reduced
-  relative to regime-2 — if anything it is *more* hardware-robust, because it does not depend on
-  reduction order.
+- **Determinism.** Bit-identical across CPU, NVIDIA **CUDA** (T4, A10G), and Apple **Metal**
+  (M3 Max) — cross-vendor, same breadth as regime-2 — and deterministic by construction on any
+  device implementing the same integer ops. Determinism is **not** reduced relative to regime-2 —
+  if anything it is *more* hardware-robust, because it does not depend on reduction order.
 - **Fidelity.** The int8-activation numerics are the same ones standard GPU quantized inference
   uses (e.g. llama.cpp's MMQ path). The arithmetic is slightly lower precision than regime-2's
   float activations, but it is a *different deterministic answer*, not a noisy one — and it is
@@ -59,7 +59,7 @@ hierarchy — "which deterministic answer," not "deterministic vs not."
 | | regime-2 | regime-3 |
 |---|---|---|
 | activations | float | int8 |
-| determinism | bit-identical (CPU / Metal / CUDA) | bit-identical (CPU ↔ CUDA) |
+| determinism | bit-identical (CPU / Metal / CUDA) | bit-identical (CPU / Metal / CUDA) |
 | verifiable vs *published* anchors | yes, now | after the re-anchor |
 | GPU integer tensor cores | no (float path) | yes |
 | best for | canonical / anchored, max precision, CPU | GPU-at-scale throughput |
