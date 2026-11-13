@@ -1,6 +1,8 @@
 """Build a platform wheel with a Rust C-ABI library, without importing torch."""
 import os
+import platform as host_platform
 from pathlib import Path
+import re
 import shutil
 import shlex
 import subprocess
@@ -50,6 +52,11 @@ class BuildPy(build_py):
 class PlatformWheel(bdist_wheel):
     def get_tag(self):
         _, _, platform = super().get_tag()
+        if sys.platform == "darwin":
+            # setup-python can supply a universal2 interpreter, but Cargo builds
+            # one native architecture. Do not advertise a universal binary.
+            platform = re.sub(r"_(universal2|arm64|x86_64)$",
+                              "_" + host_platform.machine(), platform)
         return "py3", "none", platform
 
 

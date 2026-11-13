@@ -52,7 +52,8 @@
     "source_archive_rebuilt": true,
     "cargo_package_verified": true,
     "metal_gpu_passed": 9,
-    "cpu_rounding_environment": "Odd and even halfway probes reject non-nearest modes; upward mode and FTZ rejection tested; caller mode is not mutated."
+    "cpu_rounding_environment": "Odd and even halfway probes reject non-nearest modes; upward mode and FTZ rejection tested; caller mode is not mutated.",
+    "native_wheel_architecture_checked": true
   },
   "real_q4": {
     "records": [
@@ -679,11 +680,13 @@
     "pytest-release-wheel.log": "16d05bb228852548b30889f921b818af9af85bb4443ac82f0e93635adfda6175",
     "build-release-assets.log": "d090e3216eb2e2cd08ea194b92082ce60cf84ba6b5f053698b7e19a160928c28",
     "pytest-release-wheel-r2.log": "da50741546b71eba5debe15b0bca015da0515d7c6946e96465a8a5ae6b02d33b",
-    "build-release-assets-r2.log": "059dbdee9dc4a0bcf03527f84fb9951b8a45c81c0c91cd576b7c0a6575e76320"
+    "build-release-assets-r2.log": "059dbdee9dc4a0bcf03527f84fb9951b8a45c81c0c91cd576b7c0a6575e76320",
+    "pytest-release-wheel-r3.log": "1b7c930f87dd764b7e2d354d7d555d095ae7e2248f6257905738cb568d3c4927",
+    "build-release-assets-r3.log": "462557322e4f5a84edf7dbb3403009e8af7d3433263629b720c861bbc92bf1c8"
   },
   "release_asset_sha256": {
-    "vitni_torch-0.1.0a1-py3-none-macosx_15_0_arm64.whl": "b3fc5f2ba6a16cf94d7b28ae7828436ba2936ef9f447674462bb6f904f9bd198",
-    "vitni_torch-0.1.0a1.tar.gz": "8787fdf591bb78da541fb0bdaf29851acdca78eda66652b4e5091dabe1c0e0bc"
+    "vitni_torch-0.1.0a1-py3-none-macosx_15_0_arm64.whl": "33861ea7dbd11bef36f814756a8a87b3359886c5124ea19d63aa9d4858c0d009",
+    "vitni_torch-0.1.0a1.tar.gz": "93f36516fc0502aa2a3f638846c54d7db435bbcf79f0c7b7669f3771b6da9948"
   },
   "scope": "Local physical CPU/MPS evidence. CI evidence is reported separately by GitHub Actions. Neither arbitrary float32 domains nor full PyTorch models, CUDA or gradients are validated."
 }
