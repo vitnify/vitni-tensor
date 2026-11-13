@@ -1,9 +1,9 @@
 # vitni-torch (experimental, opt-in)
 
-This research checkout also includes a resident full-model `VitniModel`
-wrapper. See [the full-model guide](FULL_MODEL.md) for its distinct API,
-CPU/Metal execution, measurements and limits. This addition is not part of
-the published 0.1.0a1 preview; the research package is versioned 0.1.0a2.
+The 0.1.0a2 preview also includes an opt-in resident full-model `VitniModel`
+wrapper for CPU and native Metal. See [the full-model guide](FULL_MODEL.md).
+Importing `vitni_torch` leaves normal PyTorch operations and backend choices
+unchanged. A full model runs only after explicit construction.
 
 Explicit CPU and Apple MPS operators using Vitni's arithmetic contract:
 

@@ -1,8 +1,9 @@
-# Resident full-model wrapper (research)
+# Opt-in resident full-model wrapper
 
-This API is on `research/torch-full-model-2026-11-13`. It has not been merged
-or released. It wraps the existing full inference engine, rather than
-reconstructing a model from the individual PyTorch preview operators.
+Available in vitni-tensor v0.3.3 / vitni-torch 0.1.0a2 as an experimental,
+explicitly opt-in API. It wraps the existing full inference engine. Importing
+the package does not open a model, replace PyTorch operations or select an
+engine backend. Construct `VitniModel` explicitly to use it.
 
 Build/install this checkout with Cargo and Python/PyTorch available:
 
@@ -82,7 +83,7 @@ and weights hash. Receipt equality by itself does not compare all logits.
 - The earlier individual operators' `[2**-32,2**32]` input restriction concerns
   their PyTorch shader path. This full-engine API accepts token IDs and uses
   the native engine instead. The finite-input Metal SiLU overflow, large-divisor
-  and underflow cases are corrected on this research branch; see
+  and underflow cases are corrected in v0.3.3; see
   [the fix and validation](../docs/research/silu-overflow-2026-11-13.md).
   These tests do not establish universal IEEE-754 equality for every engine op
   or define cross-hardware NaN-payload behavior.
@@ -98,7 +99,7 @@ export CARGO_TARGET_DIR="$PWD/build/native"
 cargo build --release --manifest-path bindings/torch/native/Cargo.toml \
   --features metal --bin full-model-worker
 python -m pip install '.[torch,test]'
-VITNI_REQUIRE_MPS=1 VITNI_REQUIRE_FULL_MODEL=1 \
+VITNI_REQUIRE_MPS=1 VITNI_REQUIRE_METAL=1 VITNI_REQUIRE_FULL_MODEL=1 \
   VITNI_FULL_MODEL_GGUF=model.gguf python -m pytest -q python/tests
 ```
 
@@ -127,3 +128,7 @@ by this wrapper benchmark.
 
 See [the research results and test plan](../docs/research/torch-full-model-2026-11-13.md)
 for the measured costs, exact replay coverage and source/binary provenance.
+
+Hosted CI sets `VITNI_FULL_MODEL_CPU_ONLY=1` for the real-model CPU contract.
+The local hardware gate above requires native Metal as well as PyTorch MPS;
+CPU-only results do not count as GPU validation.

@@ -1,5 +1,8 @@
 # Metal SiLU overflow correction and validation
 
+Release note: the tested implementation recorded here ships in v0.3.3.
+Research-branch status statements below describe the original measurement snapshot.
+
 Date: 2026-11-13. Branch: `research/torch-full-model-2026-11-13`.
 Baseline: `e773662b6dde7c73b0f1401819d4892a01daf0cd` (`e773662`, the tested resident wrapper).
 This change remains on the research branch, unmerged and unpublished.

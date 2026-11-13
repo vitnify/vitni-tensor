@@ -1,5 +1,8 @@
 # Resident full-model PyTorch wrapper: research validation
 
+Release note: the tested implementation recorded here ships in v0.3.3.
+Research-branch status statements below describe the original measurement snapshot.
+
 This report records the pre-fix wrapper at `e773662`. The subsequent
 [SiLU correction and validation](silu-overflow-2026-11-13.md) supersede its
 SiLU-overflow limitation; its original measurements are preserved below.

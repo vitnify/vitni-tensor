@@ -1,4 +1,6 @@
 import os
+import errno
+import shutil
 from pathlib import Path
 import pickle
 import subprocess
@@ -13,7 +15,10 @@ GGUF=os.environ.get('VITNI_FULL_MODEL_GGUF')
 if os.environ.get('VITNI_REQUIRE_FULL_MODEL')=='1' and not GGUF:
     raise RuntimeError('VITNI_FULL_MODEL_GGUF is required; skipped model tests do not establish conformance')
 pytestmark=pytest.mark.skipif(not GGUF,reason='requires real GGUF via VITNI_FULL_MODEL_GGUF')
-BACKENDS=['cpu']+(['metal'] if sys.platform=='darwin' else [])
+CPU_ONLY=os.environ.get('VITNI_FULL_MODEL_CPU_ONLY')=='1'
+if os.environ.get('VITNI_REQUIRE_METAL')=='1' and (CPU_ONLY or sys.platform!='darwin'):
+    raise RuntimeError('Native Metal execution is required; CPU-only tests cannot satisfy this gate')
+BACKENDS=['cpu']+(['metal'] if sys.platform=='darwin' and not CPU_ONLY else [])
 
 def equal(a,b):assert torch.equal(a.view(torch.int32),b.view(torch.int32))
 
@@ -88,7 +93,7 @@ def test_no_ambient_optimization_mutation(monkeypatch):
           'VITNI_METAL_ATTENTION_COOPERATIVE','VITNI_METAL_CONCURRENT_DISPATCH']
     for key in keys:monkeypatch.setenv(key,'deliberately-invalid')
     before={key:os.environ[key]for key in keys}
-    backend='metal' if sys.platform=='darwin' else 'cpu'
+    backend=BACKENDS[-1]
     with VitniModel(GGUF,backend=backend,optimized=backend=='metal') as model:
         assert model(torch.tensor([1])).shape[0]==1
         info=model.info()
@@ -107,7 +112,10 @@ def test_missing_model_and_backend_rejected(tmp_path):
 @pytest.mark.parametrize('backend',BACKENDS)
 def test_weight_file_not_reopened(backend,tmp_path):
     local=tmp_path/'resident.gguf'
-    os.link(GGUF,local)
+    try:os.link(GGUF,local)
+    except OSError as error:
+        if error.errno!=errno.EXDEV:raise
+        shutil.copyfile(GGUF,local)
     with VitniModel(local,backend=backend,optimized=backend=='metal') as model:
         local.unlink()
         assert model(torch.tensor([1,2])).shape[0]==2

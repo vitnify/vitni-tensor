@@ -65,7 +65,7 @@ cargo build --release --bin vitni-receipt
 
 The vitnify SDK calls this to bind the model's computation into a signed execution receipt.
 
-## Opt-in optimized Metal and PyTorch preview (0.3.2)
+## Opt-in optimized Metal and PyTorch preview (0.3.3)
 
 The retained Metal improvements are available as an explicit preset:
 
@@ -83,20 +83,32 @@ export VITNI_METAL_OPTIMIZED=1
 ```
 
 This combines cooperative Q4/RMS/Q6/attention, Q4 metadata caching, explicit
-contraction control and concurrent dispatch. Default behavior is unchanged.
+contraction control and concurrent dispatch. Selecting the preset remains explicit.
 The CLI rejects unsupported projection types/dimensions and contexts beyond
 512 tokens. The tested TinyLlama forward-time ratio against ordinary llama.cpp
 Metal was about **2.47x**; it excludes model loading and is not a universal
-performance bound. The existing SiLU overflow edge remains unresolved.
+performance bound. v0.3.3 corrects the tested finite-input SiLU overflow,
+large-divisor and underflow cases without changing the CPU numerical regime.
 
-The separate experimental **`vitni-torch` 0.1.0a1** package provides explicit
-`canonical_matmul` and raw GGUF `q4_k_linear` custom operators for CPU and MPS.
-It is inference-only and accepts a restricted numerical domain. It does not
-convert arbitrary PyTorch models or provide CUDA/autograd support. Install
-from this checkout with `python -m pip install '.[torch]'` (requires Cargo).
-See [the Python guide](python/README.md) and
-[release validation and limitations](docs/releases/v0.3.2.md), including its
-separate performance measurements.
+The experimental **`vitni-torch` 0.1.0a2** package includes an opt-in full-model
+wrapper, plus the existing individual CPU/MPS operators. Install from this
+checkout with `python -m pip install '.[torch]'` (requires Cargo), then explicitly
+construct the wrapper:
+
+```python
+import torch
+from vitni_torch import VitniModel
+
+with VitniModel('model.gguf', backend='metal', optimized=True) as model:
+    logits = model(torch.tensor([1, 450, 11781, 338], dtype=torch.int64))
+```
+
+Import does not open a model, replace PyTorch operators or change global
+backend/determinism settings. The full-model preview is eager, unbatched and
+inference-only, with CPU token/logit tensors and native CPU/Metal execution.
+CUDA, gradients and arbitrary model conversion are outside this preview.
+See [the full-model guide](python/FULL_MODEL.md), [individual operator guide](python/README.md)
+and [v0.3.3 validation and limits](docs/releases/v0.3.3.md).
 
 ## Tests
 
