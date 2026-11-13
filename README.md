@@ -65,6 +65,39 @@ cargo build --release --bin vitni-receipt
 
 The vitnify SDK calls this to bind the model's computation into a signed execution receipt.
 
+## Opt-in optimized Metal and PyTorch preview (0.3.2)
+
+The retained Metal improvements are available as an explicit preset:
+
+```sh
+cargo build --release --manifest-path metal/Cargo.toml --bin vitni-receipt-metal
+./metal/target/release/vitni-receipt-metal --optimized \
+  --gguf model.gguf --prompt "1,2,3" --n 20 --model-id my-model
+```
+
+For the existing Vitnify SDK, select the compatible binary before starting Python:
+
+```sh
+export VITNI_RECEIPT_BIN="$PWD/metal/target/release/vitni-receipt-metal"
+export VITNI_METAL_OPTIMIZED=1
+```
+
+This combines cooperative Q4/RMS/Q6/attention, Q4 metadata caching, explicit
+contraction control and concurrent dispatch. Default behavior is unchanged.
+The CLI rejects unsupported projection types/dimensions and contexts beyond
+512 tokens. The tested TinyLlama forward-time ratio against ordinary llama.cpp
+Metal was about **2.47x**; it excludes model loading and is not a universal
+performance bound. The existing SiLU overflow edge remains unresolved.
+
+The separate experimental **`vitni-torch` 0.1.0a1** package provides explicit
+`canonical_matmul` and raw GGUF `q4_k_linear` custom operators for CPU and MPS.
+It is inference-only and accepts a restricted numerical domain. It does not
+convert arbitrary PyTorch models or provide CUDA/autograd support. Install
+from this checkout with `python -m pip install '.[torch]'` (requires Cargo).
+See [the Python guide](python/README.md) and
+[release validation and limitations](docs/releases/v0.3.2.md), including its
+separate performance measurements.
+
 ## Tests
 
 `cargo test` runs the unit and determinism tests. The model-driven integration tests

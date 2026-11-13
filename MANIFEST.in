@@ -1,0 +1,9 @@
+include Cargo.toml LICENSE README.md
+recursive-include src *.rs
+recursive-include examples *.rs
+recursive-include bindings/torch/native *.toml Cargo.lock *.rs
+recursive-include kernels *.metal
+recursive-include python *.py *.md *.metal
+prune bindings/torch/native/target
+prune build
+global-exclude __pycache__ *.pyc

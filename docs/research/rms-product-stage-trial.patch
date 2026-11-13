@@ -1,0 +1,131 @@
+diff --git a/metal/src/lib.rs b/metal/src/lib.rs
+index f14633c..1568727 100644
+--- a/metal/src/lib.rs
++++ b/metal/src/lib.rs
+@@ -133,6 +133,7 @@ pub struct MetalForward {
+     pl_rms_cooperative: ComputePipelineState,
+     rms_cooperative: bool,
+     rms_variant: &'static str,
++    rms_product_stage: bool,
+     pl_silu_mul: ComputePipelineState,
+     pl_add: ComputePipelineState,
+     pl_rope: ComputePipelineState,
+@@ -265,9 +266,14 @@ impl MetalForward {
+
+         let rms_variant=match std::env::var("VITNI_METAL_RMS_VARIANT").as_deref() {
+             Ok("no_contract") => "no_contract",
++            Ok("product_stage") => "product_stage",
+             Ok("current") | Err(_) => "current",
+             Ok(_) => return Err(MetalError::Compile("unknown VITNI_METAL_RMS_VARIANT".into())),
+         };
++        let rms_product_stage = rms_variant=="product_stage" && (1..=4096).contains(&dim)
++            && (((dim*4+15)/16*16)+64) as u64 <= device.max_threadgroup_memory_length();
++        let rms_variant = if rms_variant=="product_stage" && !rms_product_stage { "no_contract" } else { rms_variant };
++        let rms_source = if rms_product_stage { format!("{FWD}\n{}",include_str!("../../kernels/rms_product_stage.metal")) } else { FWD.to_owned() };
+         let requested_q6k = std::env::var("VITNI_METAL_Q6K_COOPERATIVE").as_deref() == Ok("1");
+         let (pl_q6k_cooperative, pl_q6k_cooperative_acc) = if requested_q6k {
+             (Some(pipeline(&device, Q6K_INT, "q6k_integer_dot_cooperative")?),
+@@ -303,12 +309,13 @@ impl MetalForward {
+             pl_q6k_dot_acc: pipeline(&device, Q6K_INT, "q6k_integer_dot_acc")?,
+             pl_q4k_dequant: pipeline(&device, Q4K, "q4k_dequant")?,
+             pl_rms: pipeline(&device, FWD, "rms_kernel")?,
+-            pl_rms_cooperative: pipeline(&device, FWD, if rms_variant=="no_contract" {"rms_kernel_no_contract"}else{"rms_kernel_cooperative"})?,
++            pl_rms_cooperative: pipeline(&device, &rms_source, if rms_product_stage {"rms_kernel_product_stage"}else if rms_variant=="no_contract" {"rms_kernel_no_contract"}else{"rms_kernel_cooperative"})?,
+             rms_variant,
++            rms_product_stage,
+             // The existing RMS kernel uses a single canonical chunk. Keep this
+             // experiment inside that CPU-compatible width; wider models retain
+             // the existing path rather than gaining a new arithmetic claim.
+-            rms_cooperative: (rms_variant=="no_contract" || std::env::var("VITNI_METAL_RMS_COOPERATIVE").as_deref() == Ok("1"))
++            rms_cooperative: (rms_variant!="current" || std::env::var("VITNI_METAL_RMS_COOPERATIVE").as_deref() == Ok("1"))
+                 && (1..=8192).contains(&dim),
+             pl_silu_mul: pipeline(&device, FWD, "silu_mul")?,
+             pl_add: pipeline(&device, FWD, "add_inplace")?,
+@@ -390,6 +397,7 @@ impl MetalForward {
+     /// Disabled by default; the environment flag is sampled only at construction.
+     pub fn q4k_cooperative_enabled(&self) -> bool { self.q4k_cooperative }
+     /// Actual RMS implementation; unsupported widths retain the existing scalar path.
++    pub fn rms_product_staging_enabled(&self) -> bool { self.rms_product_stage }
+     pub fn rms_variant(&self) -> &'static str { if self.rms_cooperative {self.rms_variant}else{"current"} }
+     pub fn q4k_variant(&self) -> &'static str { self.q4k_variant }
+     pub fn q6k_cooperative_enabled(&self) -> bool { self.q6k_cooperative }
+@@ -489,13 +497,18 @@ impl MetalForward {
+
+     /// Production dispatches share an encoder; opt-in profiling can split passes.
+     fn disp(&self, e: &Encoding<'_>, pl: &ComputePipelineState, bufs: &[(u64, &Buffer, u64)], scalars: &[(u64, &[u8])], threads: usize) {
++        self.disp_local(e,pl,bufs,scalars,threads,0);
++    }
++    fn disp_local(&self, e: &Encoding<'_>, pl: &ComputePipelineState, bufs: &[(u64, &Buffer, u64)], scalars: &[(u64, &[u8])], threads: usize, local_bytes: u64) {
+         let encode = |raw: &metal::ComputeCommandEncoderRef| {
+             raw.set_compute_pipeline_state(pl);
++            if local_bytes>0 { raw.set_threadgroup_memory_length(0,local_bytes); }
+             for (idx, b, off) in bufs { raw.set_buffer(*idx, Some(b), *off); }
+             for (idx, d) in scalars { raw.set_bytes(*idx, d.len() as u64, d.as_ptr() as *const c_void); }
+             let tg = 64u64.min(threads as u64).max(1);
+             let groups = (threads as u64 + tg - 1) / tg;
+             raw.dispatch_thread_groups(MTLSize::new(groups, 1, 1), MTLSize::new(tg, 1, 1));
++            if local_bytes>0 { raw.set_threadgroup_memory_length(0,0); }
+         };
+         if let Some(raw) = e.raw { encode(raw); }
+         #[cfg(feature = "profiling")]
+@@ -516,8 +529,9 @@ impl MetalForward {
+         let (pipeline, threads) = if self.rms_cooperative {
+             (&self.pl_rms_cooperative, 64)
+         } else { (&self.pl_rms, 1) };
+-        self.disp(e, pipeline, &[(0, x, 0), (1, weight, 0), (2, out, 0)],
+-            &[(3, bytes(&[self.dim as u32, 1u32])), (4, bytes(&[self.rms_eps]))], threads);
++        let local_bytes=if self.rms_product_stage { ((self.dim*4+15)/16*16) as u64 } else { 0 };
++        self.disp_local(e, pipeline, &[(0, x, 0), (1, weight, 0), (2, out, 0)],
++            &[(3, bytes(&[self.dim as u32, 1u32])), (4, bytes(&[self.rms_eps]))], threads, local_bytes);
+     }
+
+     /// Encode one quantized linear: out[wt.n] = W . in[wt.k]. Q4_K is a single
+diff --git a/kernels/rms_product_stage.metal b/kernels/rms_product_stage.metal
+new file mode 100644
+index 0000000..3a17a4b
+--- /dev/null
++++ b/kernels/rms_product_stage.metal
+@@ -0,0 +1,43 @@
++// Research-only product staging; all original addition chains retained.
++kernel void rms_kernel_product_stage(
++    device const float* x    [[buffer(0)]],
++    device const float* w    [[buffer(1)]],
++    device       float* out  [[buffer(2)]],
++    constant     uint*  dims [[buffer(3)]],
++    constant     float& eps  [[buffer(4)]],
++    threadgroup float* squares [[threadgroup(0)]],
++    uint3 group [[threadgroup_position_in_grid]],
++    uint tid [[thread_index_in_threadgroup]])
++{
++#pragma METAL fp contract(off)
++    uint feat = dims[0], rows = dims[1], r = group.x;
++    // Uniform across the entire group, so this cannot strand a barrier.
++    if (r >= rows || feat == 0u || feat > 4096u) return;
++    device const float* row = x + (ulong)r * feat;
++    threadgroup float partials[8];
++    threadgroup float shared_scale;
++    for (uint i = tid; i < feat; i += 64u) squares[i] = row[i] * row[i];
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++    if (tid < 8u) {
++        float sum = 0.0f;
++        for (uint i = tid; i < feat; i += 8u) {
++            sum += squares[i];
++        }
++        partials[tid] = sum;
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++    if (tid == 0u) {
++        float lanes[8];
++        for (uint j = 0u; j < 8u; j++) lanes[j] = partials[j];
++        float sumsq = ftree8(lanes);
++        float mean = div_sw(sumsq, (float)feat);
++        shared_scale = div_sw(1.0f, sqrt(mean + eps));
++    }
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++    float scale = shared_scale;
++    device float* orow = out + (ulong)r * feat;
++    for (uint i = tid; i < feat; i += 64u) {
++        float scaled = row[i] * scale;
++        orow[i] = scaled * w[i];
++    }
++}

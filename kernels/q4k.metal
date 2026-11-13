@@ -1,6 +1,14 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// Opt-in contraction control; default preprocessing retains volatile guards.
+#ifdef VITNI_Q4K_NO_CONTRACT
+#pragma METAL fp contract(off)
+#define Q4K_ROUNDED
+#else
+#define Q4K_ROUNDED volatile
+#endif
+
 // ===================================================================
 // Q4_K fused dequant + canonical dot — GGUF inference hot path, on-GPU,
 // bit-identical to vitni_tensor::ops::quant::canonical_dot_q4k_fused.
@@ -259,4 +267,187 @@ kernel void q4k_linear(
         }
     }
     out[gid] = fixed_tree(chunk_sums, nchunks_used);
+}
+
+// Experimental regime-2 implementation: one physical thread for each of the
+// eight CANONICAL arithmetic lanes, eight rows per 64-thread group. Each lane
+// visits exactly the same element sequence as q4k_linear. Only lane 0 combines
+// the eight partials and then the chunk partials through the original tree.
+// Inactive tail rows still participate in every barrier; they never access x/w.
+static inline float q4k_cooperative_dot(
+    device const float* x, device const uchar* w, uint K, uint M,
+    uint nsuper, uint gid, uint tid, threadgroup float* partials)
+{
+    uint row = gid / CANON_LANES;
+    uint lane = tid % CANON_LANES;
+    uint row_slot = tid - lane;
+    bool active = row < M;
+    float lane_sum = 0.0f;
+    float chunk_sums[64];
+    uint nchunks = 0u;
+    uint supers_per_chunk = CANON_CHUNK / Q4K_NUMEL;
+
+    for (uint b = 0u; b < nsuper; b++) {
+        uint base = b * Q4K_NUMEL;
+        if (base >= K) break;
+        if (active) {
+            device const uchar* blk = w + ((ulong)row * nsuper + b) * Q4K_BYTES;
+            float d = f16_to_f32((ushort)((uint)blk[0] | ((uint)blk[1] << 8)));
+            float dmin = f16_to_f32((ushort)((uint)blk[2] | ((uint)blk[3] << 8)));
+            device const uchar* scales = blk + 4;
+            device const uchar* qs = blk + 16;
+            for (uint sub = 0u; sub < 4u; sub++) {
+                uint2 sm1 = get_scale_min_k4(2u * sub, scales);
+                uint2 sm2 = get_scale_min_k4(2u * sub + 1u, scales);
+                float d1 = d * (float)sm1.x;
+                float m1f = dmin * (float)sm1.y;
+                float d2 = d * (float)sm2.x;
+                float m2f = dmin * (float)sm2.y;
+                // Low half must finish BEFORE high half: interleaving the two
+                // would change each lane's floating-point addition sequence.
+                for (uint t = lane; t < 32u; t += CANON_LANES) {
+                    uint i = base + 64u * sub + t;
+                    if (i < K) {
+                        Q4K_ROUNDED float dq = d1 * (float)(qs[32u * sub + t] & 0x0Fu);
+                        float weight = dq - m1f;
+                        Q4K_ROUNDED float product = x[i] * weight;
+                        lane_sum += product;
+                    }
+                }
+                for (uint t = lane; t < 32u; t += CANON_LANES) {
+                    uint i = base + 64u * sub + 32u + t;
+                    if (i < K) {
+                        Q4K_ROUNDED float dq = d2 * (float)(qs[32u * sub + t] >> 4);
+                        float weight = dq - m2f;
+                        Q4K_ROUNDED float product = x[i] * weight;
+                        lane_sum += product;
+                    }
+                }
+            }
+        }
+        bool is_last = base + min(Q4K_NUMEL, K - base) >= K;
+        if (((b + 1u) % supers_per_chunk == 0u) || is_last) {
+            partials[tid] = lane_sum;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            if (lane == 0u) {
+                float lanes[8];
+                for (uint j = 0u; j < CANON_LANES; j++) lanes[j] = partials[row_slot + j];
+                chunk_sums[nchunks] = fixed_tree(lanes, CANON_LANES);
+            }
+            // Every reader finishes before another chunk can overwrite parts.
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            nchunks++;
+            lane_sum = 0.0f;
+        }
+    }
+    return lane == 0u ? fixed_tree(chunk_sums, nchunks) : 0.0f;
+}
+
+kernel void q4k_linear_cooperative(
+    device const float* x [[buffer(0)]], device const uchar* w [[buffer(1)]],
+    device float* out [[buffer(2)]], constant uint* dims [[buffer(3)]],
+    uint gid [[thread_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
+{
+    threadgroup float partials[64];
+    float dot = q4k_cooperative_dot(x, w, dims[0], dims[1], dims[2], gid, tid, partials);
+    uint row = gid / CANON_LANES;
+    if (tid % CANON_LANES == 0u && row < dims[1]) out[row] = dot;
+}
+
+kernel void q4k_linear_cooperative_acc(
+    device const float* x [[buffer(0)]], device const uchar* w [[buffer(1)]],
+    device float* out [[buffer(2)]], constant uint* dims [[buffer(3)]],
+    uint gid [[thread_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
+{
+    threadgroup float partials[64];
+    float dot = q4k_cooperative_dot(x, w, dims[0], dims[1], dims[2], gid, tid, partials);
+    uint row = gid / CANON_LANES;
+    if (tid % CANON_LANES == 0u && row < dims[1]) out[row] = out[row] + dot;
+}
+
+static inline float q4k_metadata_dot(
+    device const float* x, device const uchar* w, uint K, uint M,
+    uint nsuper, uint gid, uint tid, threadgroup float* partials)
+{
+    uint row = gid / CANON_LANES;
+    uint lane = tid % CANON_LANES;
+    uint row_slot = tid - lane;
+    bool active = row < M;
+    float lane_sum = 0.0f;
+    float chunk_sums[64];
+    uint nchunks = 0u;
+    uint supers_per_chunk = CANON_CHUNK / Q4K_NUMEL;
+
+    for (uint b = 0u; b < nsuper; b++) {
+        uint base = b * Q4K_NUMEL;
+        if (base >= K) break;
+        if (active) {
+            device const uchar* blk = w + ((ulong)row * nsuper + b) * 192u;
+            device const float* scale_min = (device const float*)blk;
+            device const uchar* qs = blk + 64u;
+            for (uint sub = 0u; sub < 4u; sub++) {
+                float d1 = scale_min[4u * sub];
+                float m1f = scale_min[4u * sub + 1u];
+                float d2 = scale_min[4u * sub + 2u];
+                float m2f = scale_min[4u * sub + 3u];
+                // Low half must finish BEFORE high half: interleaving the two
+                // would change each lane's floating-point addition sequence.
+                for (uint t = lane; t < 32u; t += CANON_LANES) {
+                    uint i = base + 64u * sub + t;
+                    if (i < K) {
+                        Q4K_ROUNDED float dq = d1 * (float)(qs[32u * sub + t] & 0x0Fu);
+                        float weight = dq - m1f;
+                        Q4K_ROUNDED float product = x[i] * weight;
+                        lane_sum += product;
+                    }
+                }
+                for (uint t = lane; t < 32u; t += CANON_LANES) {
+                    uint i = base + 64u * sub + 32u + t;
+                    if (i < K) {
+                        Q4K_ROUNDED float dq = d2 * (float)(qs[32u * sub + t] >> 4);
+                        float weight = dq - m2f;
+                        Q4K_ROUNDED float product = x[i] * weight;
+                        lane_sum += product;
+                    }
+                }
+            }
+        }
+        bool is_last = base + min(Q4K_NUMEL, K - base) >= K;
+        if (((b + 1u) % supers_per_chunk == 0u) || is_last) {
+            partials[tid] = lane_sum;
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            if (lane == 0u) {
+                float lanes[8];
+                for (uint j = 0u; j < CANON_LANES; j++) lanes[j] = partials[row_slot + j];
+                chunk_sums[nchunks] = fixed_tree(lanes, CANON_LANES);
+            }
+            // Every reader finishes before another chunk can overwrite parts.
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            nchunks++;
+            lane_sum = 0.0f;
+        }
+    }
+    return lane == 0u ? fixed_tree(chunk_sums, nchunks) : 0.0f;
+}
+
+kernel void q4k_linear_metadata(
+    device const float* x [[buffer(0)]], device const uchar* w [[buffer(1)]],
+    device float* out [[buffer(2)]], constant uint* dims [[buffer(3)]],
+    uint gid [[thread_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
+{
+    threadgroup float partials[64];
+    float dot = q4k_metadata_dot(x, w, dims[0], dims[1], dims[2], gid, tid, partials);
+    uint row = gid / CANON_LANES;
+    if (tid % CANON_LANES == 0u && row < dims[1]) out[row] = dot;
+}
+
+kernel void q4k_linear_metadata_acc(
+    device const float* x [[buffer(0)]], device const uchar* w [[buffer(1)]],
+    device float* out [[buffer(2)]], constant uint* dims [[buffer(3)]],
+    uint gid [[thread_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
+{
+    threadgroup float partials[64];
+    float dot = q4k_metadata_dot(x, w, dims[0], dims[1], dims[2], gid, tid, partials);
+    uint row = gid / CANON_LANES;
+    if (tid % CANON_LANES == 0u && row < dims[1]) out[row] = out[row] + dot;
 }

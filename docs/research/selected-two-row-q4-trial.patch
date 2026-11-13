@@ -1,0 +1,233 @@
+diff --git a/metal/src/lib.rs b/metal/src/lib.rs
+index e173b80..a8a9a2e 100644
+--- a/metal/src/lib.rs
++++ b/metal/src/lib.rs
+@@ -20,6 +20,7 @@ pub mod profiling;
+ mod q4_metadata;
+
+ use std::ffi::c_void;
++use std::sync::atomic::{AtomicUsize, Ordering};
+ use metal::{Buffer, CommandBufferRef, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize};
+ use vitni_tensor::cert::NullSink;
+ use vitni_tensor::model::config::Config;
+@@ -91,6 +92,7 @@ fn dtype_kind(dtype_dbg: &str) -> u8 {
+ }
+
+ const Q4K: &str = include_str!("../../kernels/q4k.metal");
++const Q4K_TWO_ROW: &str = include_str!("../../kernels/q4k_two_row.metal");
+ const Q6K_INT: &str = include_str!("../../kernels/q6k_int.metal");
+ const FWD: &str = include_str!("../../kernels/forward_ops.metal");
+ const REGIME3: &str = include_str!("../../kernels/regime3.metal");
+@@ -119,6 +121,10 @@ pub struct MetalForward {
+     pl_q4k_cooperative_acc: ComputePipelineState,
+     q4k_cooperative: bool,
+     q4k_variant: &'static str,
++    pl_q4k_two_row: Option<ComputePipelineState>,
++    pl_q4k_two_row_acc: Option<ComputePipelineState>,
++    q4k_two_row_shape: bool,
++    q4k_two_row_dispatches: AtomicUsize,
+     #[cfg(feature = "profiling")]
+     profiler: Option<profiling::Profiler>,
+     pl_q6k_quant: ComputePipelineState,
+@@ -258,6 +264,14 @@ impl MetalForward {
+         let n_layers = cfg.n_layers;
+         let seq = cfg.seq_len;
+
++        let (pl_q4k_two_row,pl_q4k_two_row_acc,q4k_two_row_shape)=
++            if q4k_variant=="metadata" && std::env::var("VITNI_METAL_Q4K_TWO_ROW_SHAPE").as_deref()==Ok("1") {
++                let source=format!("#define VITNI_Q4K_NO_CONTRACT 1\n{Q4K}\n{Q4K_TWO_ROW}");
++                let pl=pipeline(&device,&source,"q4k_linear_metadata_two_row")?;
++                let acc=pipeline(&device,&source,"q4k_linear_metadata_two_row_acc")?;
++                let supported=pl.max_total_threads_per_threadgroup()>=64 && acc.max_total_threads_per_threadgroup()>=64;
++                (Some(pl),Some(acc),supported)
++            } else {(None,None,false)};
+         let rms_variant=match std::env::var("VITNI_METAL_RMS_VARIANT").as_deref() {
+             Ok("no_contract") => "no_contract",
+             Ok("current") | Err(_) => "current",
+@@ -279,6 +293,8 @@ impl MetalForward {
+                 (Some(pl), supported)
+             } else { (None, false) };
+         Ok(MetalForward {
++            pl_q4k_two_row, pl_q4k_two_row_acc, q4k_two_row_shape,
++            q4k_two_row_dispatches: AtomicUsize::new(0),
+             pl_attn_cooperative,
+             attention_cooperative,
+             pl_q6k_cooperative,
+@@ -383,6 +399,17 @@ impl MetalForward {
+     /// Experimental implementation of regime-2's unchanged arithmetic contract.
+     /// Disabled by default; the environment flag is sampled only at construction.
+     pub fn q4k_cooperative_enabled(&self) -> bool { self.q4k_cooperative }
++    // Exact shape selected before this trial; every other matrix retains baseline.
++    fn q4k_two_row_for(&self, wt: &WBuf) -> bool {
++        self.q4k_two_row_shape && self.regime==2 && self.q4k_variant=="metadata"
++            && wt.kind==0 && wt.q4_packed && wt.k==2048 && wt.n==5632
++    }
++    pub fn q4k_two_row_matrices(&self) -> usize {
++        std::iter::once(&self.wcls).chain(self.l_wq.iter()).chain(self.l_wk.iter()).chain(self.l_wv.iter())
++            .chain(self.l_wo.iter()).chain(self.l_w1.iter()).chain(self.l_w2.iter()).chain(self.l_w3.iter())
++            .filter(|wt|self.q4k_two_row_for(wt)).count()
++    }
++    pub fn q4k_two_row_dispatches(&self) -> usize {self.q4k_two_row_dispatches.load(Ordering::Relaxed)}
+     /// Actual RMS implementation; unsupported widths retain the existing scalar path.
+     pub fn rms_variant(&self) -> &'static str { if self.rms_cooperative {self.rms_variant}else{"current"} }
+     pub fn q4k_variant(&self) -> &'static str { self.q4k_variant }
+@@ -555,9 +582,11 @@ impl MetalForward {
+                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
+                 &[(4, bytes(&dims))], wt.n * if cooperative { 8 } else { 1 });
+         } else if self.q4k_cooperative {
+-            self.disp(e, &self.pl_q4k_cooperative,
++            let two_row=self.q4k_two_row_for(wt);
++            let pipeline=if two_row {self.q4k_two_row_dispatches.fetch_add(1,Ordering::Relaxed);self.pl_q4k_two_row.as_ref().unwrap()}else{&self.pl_q4k_cooperative};
++            self.disp(e, pipeline,
+                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+-                &[(3, bytes(&dims))], wt.n * 8);
++                &[(3, bytes(&dims))], if two_row {wt.n.div_ceil(2)*8}else{wt.n*8});
+         } else {
+             self.disp(e, &self.pl_q4k_linear, // fused dequant + canonical dot on quantized Q4_K
+                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+@@ -606,9 +635,11 @@ impl MetalForward {
+                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
+                 &[(4, bytes(&dims))], wt.n * if cooperative { 8 } else { 1 });
+         } else if self.q4k_cooperative {
+-            self.disp(e, &self.pl_q4k_cooperative_acc,
++            let two_row=self.q4k_two_row_for(wt);
++            let pipeline=if two_row {self.q4k_two_row_dispatches.fetch_add(1,Ordering::Relaxed);self.pl_q4k_two_row_acc.as_ref().unwrap()}else{&self.pl_q4k_cooperative_acc};
++            self.disp(e, pipeline,
+                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+-                &[(3, bytes(&dims))], wt.n * 8);
++                &[(3, bytes(&dims))], if two_row {wt.n.div_ceil(2)*8}else{wt.n*8});
+         } else {
+             self.disp(e, &self.pl_q4k_linear_acc, // fused dequant + canonical dot on quantized Q4_K
+                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+@@ -631,6 +662,7 @@ impl MetalForward {
+
+     /// Logits for `token` at sequence position `pos`, advancing the (GPU) KV cache.
+     pub fn step(&mut self, token: u32, pos: usize) -> Vec<f32> {
++        self.q4k_two_row_dispatches.store(0,Ordering::Relaxed);
+         #[cfg(feature = "profiling")]
+         let clocks = self.profiler.as_ref().map(|p| {
+             p.begin();
+diff --git a/kernels/q4k_two_row.metal b/kernels/q4k_two_row.metal
+new file mode 100644
+index 0000000..54e73b3
+--- /dev/null
++++ b/kernels/q4k_two_row.metal
+@@ -0,0 +1,118 @@
++// Each eight-thread subgroup owns two independent output rows. Per-row
++// canonical lanes, rounded operations, chunk boundaries and trees are unchanged.
++// Compile with VITNI_Q4K_NO_CONTRACT=1, as in the retained metadata baseline.
++static inline float2 q4k_metadata_two_row_dot(
++    device const float* x, device const uchar* w, uint K, uint M,
++    uint nsuper, uint gid, uint tid, threadgroup float* partials)
++{
++    uint row0 = (gid / CANON_LANES) * 2u;
++    uint row1 = row0 + 1u;
++    uint lane = tid % CANON_LANES;
++    uint row_slot = tid - lane;
++    bool active0 = row0 < M;
++    bool active1 = row1 < M;
++    float sum0 = 0.0f, sum1 = 0.0f;
++    float chunks0[64], chunks1[64];
++    uint nchunks = 0u;
++    uint supers_per_chunk = CANON_CHUNK / Q4K_NUMEL;
++    for (uint b = 0u; b < nsuper; b++) {
++        uint base = b * Q4K_NUMEL;
++        if (base >= K) break;
++        if (active0) {
++            device const uchar* blk0 = w + ((ulong)row0 * nsuper + b) * 192u;
++            // A missing second row never addresses an out-of-range block.
++            device const uchar* blk1 = w + ((ulong)(active1 ? row1 : row0) * nsuper + b) * 192u;
++            device const float* scale0 = (device const float*)blk0;
++            device const float* scale1 = (device const float*)blk1;
++            device const uchar* qs0 = blk0 + 64u;
++            device const uchar* qs1 = blk1 + 64u;
++            for (uint sub = 0u; sub < 4u; sub++) {
++                float d10 = scale0[4u*sub], m10 = scale0[4u*sub+1u];
++                float d20 = scale0[4u*sub+2u], m20 = scale0[4u*sub+3u];
++                float d11 = scale1[4u*sub], m11 = scale1[4u*sub+1u];
++                float d21 = scale1[4u*sub+2u], m21 = scale1[4u*sub+3u];
++                // Finish the low half before high, exactly as each original lane.
++                for (uint t = lane; t < 32u; t += CANON_LANES) {
++                    uint i = base + 64u*sub + t;
++                    if (i < K) {
++                        float xi = x[i];
++                        Q4K_ROUNDED float dq0 = d10 * (float)(qs0[32u*sub+t] & 0x0fu);
++                        float weight0 = dq0 - m10;
++                        Q4K_ROUNDED float product0 = xi * weight0;
++                        if (active1) {
++                            Q4K_ROUNDED float dq1 = d11 * (float)(qs1[32u*sub+t] & 0x0fu);
++                            float weight1 = dq1 - m11;
++                            Q4K_ROUNDED float product1 = xi * weight1;
++                            sum1 += product1;
++                        }
++                        sum0 += product0;
++                    }
++                }
++                for (uint t = lane; t < 32u; t += CANON_LANES) {
++                    uint i = base + 64u*sub + 32u + t;
++                    if (i < K) {
++                        float xi = x[i];
++                        Q4K_ROUNDED float dq0 = d20 * (float)(qs0[32u*sub+t] >> 4);
++                        float weight0 = dq0 - m20;
++                        Q4K_ROUNDED float product0 = xi * weight0;
++                        if (active1) {
++                            Q4K_ROUNDED float dq1 = d21 * (float)(qs1[32u*sub+t] >> 4);
++                            float weight1 = dq1 - m21;
++                            Q4K_ROUNDED float product1 = xi * weight1;
++                            sum1 += product1;
++                        }
++                        sum0 += product0;
++                    }
++                }
++            }
++        }
++        bool is_last = base + min(Q4K_NUMEL, K-base) >= K;
++        if (((b+1u) % supers_per_chunk == 0u) || is_last) {
++            partials[tid] = sum0;
++            partials[64u+tid] = sum1;
++            threadgroup_barrier(mem_flags::mem_threadgroup);
++            if (lane == 0u) {
++                float lanes0[8], lanes1[8];
++                for (uint j=0u; j<CANON_LANES; j++) {
++                    lanes0[j] = partials[row_slot+j];
++                    lanes1[j] = partials[64u+row_slot+j];
++                }
++                chunks0[nchunks] = fixed_tree(lanes0, CANON_LANES);
++                chunks1[nchunks] = fixed_tree(lanes1, CANON_LANES);
++            }
++            threadgroup_barrier(mem_flags::mem_threadgroup);
++            nchunks++;
++            sum0=0.0f; sum1=0.0f;
++        }
++    }
++    if (lane == 0u) return float2(fixed_tree(chunks0,nchunks),fixed_tree(chunks1,nchunks));
++    return float2(0.0f);
++}
++
++kernel void q4k_linear_metadata_two_row(
++    device const float* x [[buffer(0)]], device const uchar* w [[buffer(1)]],
++    device float* out [[buffer(2)]], constant uint* dims [[buffer(3)]],
++    uint gid [[thread_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
++{
++    threadgroup float partials[128];
++    float2 dot=q4k_metadata_two_row_dot(x,w,dims[0],dims[1],dims[2],gid,tid,partials);
++    uint row=(gid/CANON_LANES)*2u;
++    if (tid%CANON_LANES==0u) {
++        if (row<dims[1]) out[row]=dot.x;
++        if (row+1u<dims[1]) out[row+1u]=dot.y;
++    }
++}
++
++kernel void q4k_linear_metadata_two_row_acc(
++    device const float* x [[buffer(0)]], device const uchar* w [[buffer(1)]],
++    device float* out [[buffer(2)]], constant uint* dims [[buffer(3)]],
++    uint gid [[thread_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
++{
++    threadgroup float partials[128];
++    float2 dot=q4k_metadata_two_row_dot(x,w,dims[0],dims[1],dims[2],gid,tid,partials);
++    uint row=(gid/CANON_LANES)*2u;
++    if (tid%CANON_LANES==0u) {
++        if (row<dims[1]) out[row]=out[row]+dot.x;
++        if (row+1u<dims[1]) out[row+1u]=out[row+1u]+dot.y;
++    }
++}

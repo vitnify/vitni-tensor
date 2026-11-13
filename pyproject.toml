@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vitni-torch"
+version = "0.1.0a1"
+description = "Opt-in canonical CPU and Metal inference operators for PyTorch"
+readme = "python/README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+classifiers = ["Development Status :: 3 - Alpha", "Programming Language :: Python :: 3"]
+
+[project.optional-dependencies]
+torch = ["torch>=2.14"]
+test = ["pytest>=7", "numpy"]
+
+[project.urls]
+Source = "https://github.com/vitnify/vitni-tensor"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["vitni_torch*"]
+
+[tool.setuptools.package-data]
+vitni_torch = ["_shaders/*.metal", "*.dylib", "*.so", "*.dll"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+addopts = "-ra"

@@ -3,7 +3,26 @@
 All notable changes to `vitni-tensor` are documented here.
 This project follows [Semantic Versioning](https://semver.org).
 
-## [Unreleased] — backends & docs (no engine/published-crate change)
+## [0.3.2] — 2026-11-13
+
+Opt-in backend/package additions. The core's default numerical behavior and
+published regime-2 anchors are unchanged.
+
+- Optimized Metal preset: cooperative Q4/RMS/Q6/attention, Q4 metadata,
+  contraction control and concurrent dispatch. Retained after exact-replay
+  and lower-load measurements; rejected trials remain inactive.
+- SDK-compatible `vitni-receipt-metal`, with explicit dimension, projection
+  encoding and 512-token context checks before GPU execution.
+- Experimental `vitni-torch` 0.1.0a1: two explicit inference-only CPU/MPS
+  custom operators, packaged Rust C ABI and Metal shaders, compilation/export
+  registrations, and a bounded input domain that excludes subnormal handling
+  unsupported by the tested PyTorch MPS shader path.
+- Cross-platform wheel/source build CI and numerical/operator tests.
+- [Release measurements and limits](docs/releases/v0.3.2.md), including the
+  distinction between full-engine and PyTorch component performance and the
+  unresolved pre-existing Metal SiLU overflow edge.
+
+### Previously unreleased backend work included in this release
 
 GPU-backend work only (the `metal/` and `cuda/` crates + `kernels/`); the published
 `vitni-tensor` engine crate is unchanged since 0.3.0.

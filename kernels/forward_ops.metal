@@ -147,6 +147,50 @@ kernel void rms_kernel(
     }
 }
 
+// Opt-in implementation of the SAME single-chunk RMS contract (feat <= 8192).
+// A full 64-thread group owns one row. Only the eight canonical lanes reduce;
+// every lane retains its element order. Thread 0 applies the original tree and
+// scale arithmetic; all threads then write independent output elements.
+kernel void rms_kernel_cooperative(
+    device const float* x    [[buffer(0)]],
+    device const float* w    [[buffer(1)]],
+    device       float* out  [[buffer(2)]],
+    constant     uint*  dims [[buffer(3)]],
+    constant     float& eps  [[buffer(4)]],
+    uint3 group [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]])
+{
+    uint feat = dims[0], rows = dims[1], r = group.x;
+    // Uniform across the entire group, so this cannot strand a barrier.
+    if (r >= rows) return;
+    device const float* row = x + (ulong)r * feat;
+    threadgroup float partials[8];
+    threadgroup float shared_scale;
+    if (tid < 8u) {
+        float sum = 0.0f;
+        for (uint i = tid; i < feat; i += 8u) {
+            volatile float product = row[i] * row[i];
+            sum += product;
+        }
+        partials[tid] = sum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0u) {
+        float lanes[8];
+        for (uint j = 0u; j < 8u; j++) lanes[j] = partials[j];
+        float sumsq = ftree8(lanes);
+        float mean = div_sw(sumsq, (float)feat);
+        shared_scale = div_sw(1.0f, sqrt(mean + eps));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float scale = shared_scale;
+    device float* orow = out + (ulong)r * feat;
+    for (uint i = tid; i < feat; i += 64u) {
+        volatile float scaled = row[i] * scale;
+        orow[i] = scaled * w[i];
+    }
+}
+
 // softmax along the last dim: subtract max, exp, normalize.
 kernel void softmax_kernel(
     device const float* x    [[buffer(0)]],
@@ -300,6 +344,83 @@ kernel void attention(
     }
 }
 
+// Opt-in unchanged-profile attention. One group per query head; independent
+// Q.K positions, exponentials and A.V columns are distributed across 64 threads.
+// Max retains its original serial comparison order. Denominator threads retain
+// the original eight chains and fixed tree; no padding or reassociation.
+kernel void attention_cooperative(
+    device const float* q [[buffer(0)]], device const float* kcache [[buffer(1)]],
+    device const float* vcache [[buffer(2)]], device float* xbout [[buffer(3)]],
+    constant uint* d [[buffer(4)]], uint3 group [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]])
+{
+#pragma METAL fp contract(off)
+    uint h = group.x;
+    uint n_heads=d[0], head_size=d[1], kv_dim=d[2], kv_mul=d[3], pos=d[4];
+    if (h>=n_heads || pos>=512u || head_size==0u || head_size>8192u || kv_mul==0u) return;
+    uint tlen=pos+1u, qoff=h*head_size, kvhead=h/kv_mul;
+    float sqrt_hs=sqrt(float(head_size));
+    threadgroup float scores[512];
+    threadgroup float sums[8];
+    threadgroup float normalization[2];
+    for (uint t=tid;t<tlen;t+=64u) {
+        uint koff=t*kv_dim+kvhead*head_size;
+        float lane[8]={0,0,0,0,0,0,0,0};
+        uint full=head_size-(head_size%8u);
+        uint dd=0u;
+        for (;dd<full;dd+=8u) {
+            for (uint j=0u;j<8u;j++) {
+                float p=q[qoff+dd+j]*kcache[koff+dd+j];
+                lane[j]+=p;
+            }
+        }
+        for (;dd<head_size;dd++) {
+            float p=q[qoff+dd]*kcache[koff+dd];
+            lane[dd%8u]+=p;
+        }
+        scores[t]=div_sw(ftree8(lane),sqrt_hs);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid==0u) {
+        float mx=-INFINITY;
+        for (uint t=0u;t<tlen;t++) if (scores[t]>mx) mx=scores[t];
+        normalization[0]=mx;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint t=tid;t<tlen;t+=64u) scores[t]=vt_expf(scores[t]-normalization[0]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid<8u) {
+        float sum=0.0f;
+        for (uint t=tid;t<tlen;t+=8u) sum+=scores[t];
+        sums[tid]=sum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid==0u) {
+        float lane[8];
+        for (uint j=0u;j<8u;j++) lane[j]=sums[j];
+        normalization[1]=div_sw(1.0f,ftree8(lane));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint t=tid;t<tlen;t+=64u) scores[t]=scores[t]*normalization[1];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint dd=tid;dd<head_size;dd+=64u) {
+        float lane[8]={0,0,0,0,0,0,0,0};
+        uint full=tlen-(tlen%8u), t=0u;
+        for (;t<full;t+=8u) {
+            for (uint j=0u;j<8u;j++) {
+                uint voff=(t+j)*kv_dim+kvhead*head_size;
+                float p=scores[t+j]*vcache[voff+dd];
+                lane[j]+=p;
+            }
+        }
+        for (;t<tlen;t++) {
+            float p=scores[t]*vcache[t*kv_dim+kvhead*head_size+dd];
+            lane[t%8u]+=p;
+        }
+        xbout[qoff+dd]=ftree8(lane);
+    }
+}
+
 // SwiGLU inner: silu(gate) * up, fused so `up` never leaves the GPU.
 kernel void silu_mul(
     device const float* gate [[buffer(0)]],
@@ -334,4 +455,46 @@ kernel void silu_kernel(
     if (gid >= n) return;
     float v = x[gid];
     out[gid] = div_sw(v, 1.0f + vt_expf(-v));
+}
+
+// Opt-in local contraction-off RMS: unchanged operations, no volatile intermediates.
+kernel void rms_kernel_no_contract(
+    device const float* x    [[buffer(0)]],
+    device const float* w    [[buffer(1)]],
+    device       float* out  [[buffer(2)]],
+    constant     uint*  dims [[buffer(3)]],
+    constant     float& eps  [[buffer(4)]],
+    uint3 group [[threadgroup_position_in_grid]],
+    uint tid [[thread_index_in_threadgroup]])
+{
+#pragma METAL fp contract(off)
+    uint feat = dims[0], rows = dims[1], r = group.x;
+    // Uniform across the entire group, so this cannot strand a barrier.
+    if (r >= rows) return;
+    device const float* row = x + (ulong)r * feat;
+    threadgroup float partials[8];
+    threadgroup float shared_scale;
+    if (tid < 8u) {
+        float sum = 0.0f;
+        for (uint i = tid; i < feat; i += 8u) {
+            float product = row[i] * row[i];
+            sum += product;
+        }
+        partials[tid] = sum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0u) {
+        float lanes[8];
+        for (uint j = 0u; j < 8u; j++) lanes[j] = partials[j];
+        float sumsq = ftree8(lanes);
+        float mean = div_sw(sumsq, (float)feat);
+        shared_scale = div_sw(1.0f, sqrt(mean + eps));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float scale = shared_scale;
+    device float* orow = out + (ulong)r * feat;
+    for (uint i = tid; i < feat; i += 64u) {
+        float scaled = row[i] * scale;
+        orow[i] = scaled * w[i];
+    }
 }

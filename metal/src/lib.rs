@@ -14,6 +14,11 @@
 //! back. This is pure data-movement/batching — the arithmetic (and thus the
 //! certificate) is unchanged from the op-at-a-time reference.
 
+#[cfg(feature = "profiling")]
+pub mod profiling;
+
+mod q4_metadata;
+
 use std::ffi::c_void;
 use metal::{Buffer, CommandBufferRef, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize};
 use vitni_tensor::cert::NullSink;
@@ -47,12 +52,37 @@ fn pipeline(device: &Device, src: &str, func: &str) -> Result<ComputePipelineSta
     opts.set_fast_math_enabled(false);
     let lib = device.new_library_with_source(src, &opts).map_err(MetalError::Compile)?;
     let f = lib.get_function(func, None).map_err(MetalError::Compile)?;
+    #[cfg(feature = "profiling")]
+    {
+        let descriptor = metal::ComputePipelineDescriptor::new();
+        descriptor.set_label(func);
+        descriptor.set_compute_function(Some(&f));
+        device.new_compute_pipeline_state(&descriptor).map_err(MetalError::Compile)
+    }
+    #[cfg(not(feature = "profiling"))]
     device.new_compute_pipeline_state_with_function(&f).map_err(MetalError::Compile)
 }
 
 /// A quantized weight matrix resident on the GPU. `n` = output rows, `k` = input.
 /// `kind`: 0 = Q4_K, 1 = Q6_K, 2 = Q8_0, 3 = Q5_0 (the dtypes these models' linears use).
-struct WBuf { buf: Buffer, kind: u8, n: usize, k: usize }
+struct WBuf { buf: Buffer, kind: u8, n: usize, k: usize,
+    q4_headers: Option<Vec<u8>>, q4_packed: bool }
+
+impl WBuf {
+    fn set_q4_metadata(&mut self, device: &Device, packed: bool) {
+        if self.kind != 0 || self.q4_packed == packed { return; }
+        let source=unsafe { std::slice::from_raw_parts(self.buf.contents().cast::<u8>(),self.buf.length() as usize) };
+        let data=if packed {
+            self.q4_headers=Some(q4_metadata::headers(source));
+            q4_metadata::pack(source)
+        } else {
+            q4_metadata::unpack(source,self.q4_headers.as_ref().unwrap())
+        };
+        self.buf=device.new_buffer_with_data(data.as_ptr().cast(),data.len() as u64,MTLResourceOptions::StorageModeShared);
+        self.q4_packed=packed;
+        if !packed { self.q4_headers=None; }
+    }
+}
 
 /// Map a weight tensor's GGUF dtype to a WBuf `kind`. Unknown dtypes fall back to 0
 /// (Q4_K); the models in scope (TinyLlama, Mistral, Qwen2.5) only use 0–3.
@@ -66,22 +96,50 @@ const FWD: &str = include_str!("../../kernels/forward_ops.metal");
 const REGIME3: &str = include_str!("../../kernels/regime3.metal");
 const DTYPES: &str = include_str!("../../kernels/dtypes.metal");
 
+/// Production uses one compute encoder. Research dispatch timing uses one
+/// encoder per dispatch so Apple's stage timestamps can identify each operation.
+struct Encoding<'a> {
+    raw: Option<&'a metal::ComputeCommandEncoderRef>,
+    #[cfg(feature = "profiling")]
+    command: &'a CommandBufferRef,
+    #[cfg(feature = "profiling")]
+    profiler: Option<&'a profiling::Profiler>,
+}
+impl Encoding<'_> {
+    fn end(&self) { if let Some(e) = self.raw { e.end_encoding(); } }
+}
+
 /// A quantized Llama-2 model resident on the Apple GPU.
 pub struct MetalForward {
     device: Device,
     queue: CommandQueue,
+    concurrent_dispatch: bool,
     pl_q4k_linear: ComputePipelineState,
     pl_q4k_linear_acc: ComputePipelineState,
+    pl_q4k_cooperative: ComputePipelineState,
+    pl_q4k_cooperative_acc: ComputePipelineState,
+    q4k_cooperative: bool,
+    q4k_variant: &'static str,
+    #[cfg(feature = "profiling")]
+    profiler: Option<profiling::Profiler>,
     pl_q6k_quant: ComputePipelineState,
     pl_q6k_dot: ComputePipelineState,
     pl_q6k_dot_acc: ComputePipelineState,
+    pl_q6k_cooperative: Option<ComputePipelineState>,
+    pl_q6k_cooperative_acc: Option<ComputePipelineState>,
+    q6k_cooperative: bool,
     pl_q4k_dequant: ComputePipelineState,
     pl_rms: ComputePipelineState,
+    pl_rms_cooperative: ComputePipelineState,
+    rms_cooperative: bool,
+    rms_variant: &'static str,
     pl_silu_mul: ComputePipelineState,
     pl_add: ComputePipelineState,
     pl_rope: ComputePipelineState,
     pl_rope_neox: ComputePipelineState,   // Qwen2 split-half RoPE
     pl_attn: ComputePipelineState,
+    pl_attn_cooperative: Option<ComputePipelineState>,
+    attention_cooperative: bool,
     rope_neox: bool,                      // true = NeoX (Qwen2), false = interleaved (Llama)
     // Q8_0 / Q5_0 linears (dequant row + canonical dot) — regime-independent
     pl_q8_0: ComputePipelineState,
@@ -157,6 +215,10 @@ fn write_buf(buf: &Buffer, data: &[f32]) {
 
 impl MetalForward {
     pub fn new(cfg: &Config, w: &QuantizedWeights) -> Result<MetalForward, MetalError> {
+        let concurrent_dispatch = std::env::var("VITNI_METAL_CONCURRENT_DISPATCH").as_deref() == Ok("1");
+        if concurrent_dispatch && std::env::var("VITNI_METAL_PROFILE").as_deref() == Ok("dispatch") {
+            return Err(MetalError::Compile("concurrent dispatch cannot use split-pass profiling".into()));
+        }
         let device = Device::system_default().ok_or(MetalError::NoDevice)?;
         let queue = device.new_command_queue();
         let shared = MTLResourceOptions::StorageModeShared;
@@ -170,8 +232,26 @@ impl MetalForward {
         // f32_matvec" shortcut diverged from the fused reduction at 7B matrix
         // sizes (TinyLlama agreed by luck; Mistral-7B did not). Keeping weights
         // quantized also avoids the f32 memory blow-up.
+        // Opt-in contraction control; current remains the default.
+        let q4k_variant = match std::env::var("VITNI_METAL_Q4K_VARIANT").as_deref() {
+            Ok("no_contract") => "no_contract",
+            Ok("metadata") => "metadata",
+            Ok("current") | Err(_) => "current",
+            Ok(_) => return Err(MetalError::Compile("unknown VITNI_METAL_Q4K_VARIANT".into())),
+        };
+        let cooperative_source = match q4k_variant {
+            "no_contract" | "metadata" => format!("#define VITNI_Q4K_NO_CONTRACT 1\n{Q4K}"),
+            _ => Q4K.to_owned(),
+        };
         let mkw = |t: &QuantTensor, n: usize, k: usize| {
-            WBuf { buf: ubuf(t.bytes), kind: dtype_kind(&format!("{:?}", t.dtype)), n, k }
+            let kind=dtype_kind(&format!("{:?}", t.dtype));
+            let packed=q4k_variant=="metadata" && kind==0;
+            if packed {
+                let data=q4_metadata::pack(t.bytes);
+                WBuf { buf:ubuf(&data), kind,n,k,q4_headers:Some(q4_metadata::headers(t.bytes)),q4_packed:true }
+            } else {
+                WBuf { buf:ubuf(t.bytes),kind,n,k,q4_headers:None,q4_packed:false }
+            }
         };
 
         let dim = cfg.dim;
@@ -183,14 +263,53 @@ impl MetalForward {
         let n_layers = cfg.n_layers;
         let seq = cfg.seq_len;
 
+        let rms_variant=match std::env::var("VITNI_METAL_RMS_VARIANT").as_deref() {
+            Ok("no_contract") => "no_contract",
+            Ok("current") | Err(_) => "current",
+            Ok(_) => return Err(MetalError::Compile("unknown VITNI_METAL_RMS_VARIANT".into())),
+        };
+        let requested_q6k = std::env::var("VITNI_METAL_Q6K_COOPERATIVE").as_deref() == Ok("1");
+        let (pl_q6k_cooperative, pl_q6k_cooperative_acc) = if requested_q6k {
+            (Some(pipeline(&device, Q6K_INT, "q6k_integer_dot_cooperative")?),
+             Some(pipeline(&device, Q6K_INT, "q6k_integer_dot_cooperative_acc")?))
+        } else { (None, None) };
+        let q6k_cooperative = requested_q6k
+            && pl_q6k_cooperative.as_ref().unwrap().thread_execution_width() == 32
+            && pl_q6k_cooperative_acc.as_ref().unwrap().thread_execution_width() == 32;
+        let (pl_attn_cooperative, attention_cooperative) =
+            if std::env::var("VITNI_METAL_ATTENTION_COOPERATIVE").as_deref() == Ok("1") {
+                let pl = pipeline(&device, FWD, "attention_cooperative")?;
+                let supported = pl.max_total_threads_per_threadgroup() >= 64
+                    && (1..=8192).contains(&head_size) && cfg.n_heads > 0 && cfg.kv_mul() > 0;
+                (Some(pl), supported)
+            } else { (None, false) };
         Ok(MetalForward {
+            concurrent_dispatch,
+            pl_attn_cooperative,
+            attention_cooperative,
+            pl_q6k_cooperative,
+            pl_q6k_cooperative_acc,
+            q6k_cooperative,
             pl_q4k_linear: pipeline(&device, Q4K, "q4k_linear")?,
             pl_q4k_linear_acc: pipeline(&device, Q4K, "q4k_linear_acc")?,
+            pl_q4k_cooperative: pipeline(&device, &cooperative_source, if q4k_variant=="metadata" {"q4k_linear_metadata"} else {"q4k_linear_cooperative"})?,
+            pl_q4k_cooperative_acc: pipeline(&device, &cooperative_source, if q4k_variant=="metadata" {"q4k_linear_metadata_acc"} else {"q4k_linear_cooperative_acc"})?,
+            q4k_cooperative: q4k_variant != "current" || std::env::var("VITNI_METAL_Q4K_COOPERATIVE").as_deref() == Ok("1"),
+            q4k_variant,
+            #[cfg(feature = "profiling")]
+            profiler: profiling::Profiler::from_environment(&device).map_err(MetalError::Compile)?,
             pl_q6k_quant: pipeline(&device, Q6K_INT, "q6k_quantize")?,
             pl_q6k_dot: pipeline(&device, Q6K_INT, "q6k_integer_dot")?,
             pl_q6k_dot_acc: pipeline(&device, Q6K_INT, "q6k_integer_dot_acc")?,
             pl_q4k_dequant: pipeline(&device, Q4K, "q4k_dequant")?,
             pl_rms: pipeline(&device, FWD, "rms_kernel")?,
+            pl_rms_cooperative: pipeline(&device, FWD, if rms_variant=="no_contract" {"rms_kernel_no_contract"}else{"rms_kernel_cooperative"})?,
+            rms_variant,
+            // The existing RMS kernel uses a single canonical chunk. Keep this
+            // experiment inside that CPU-compatible width; wider models retain
+            // the existing path rather than gaining a new arithmetic claim.
+            rms_cooperative: (rms_variant=="no_contract" || std::env::var("VITNI_METAL_RMS_COOPERATIVE").as_deref() == Ok("1"))
+                && (1..=8192).contains(&dim),
             pl_silu_mul: pipeline(&device, FWD, "silu_mul")?,
             pl_add: pipeline(&device, FWD, "add_inplace")?,
             pl_rope: pipeline(&device, FWD, "rope_apply")?,
@@ -242,7 +361,53 @@ impl MetalForward {
     /// Select the numeric regime: 2 = shipped (float Q4_K + fixed_tree), 3 = reserved
     /// integer-activation k-quant linears with running-sum combine (bit-identical to the
     /// CPU `run_quantized_regime3`). Only changes how Q4_K/Q6_K linears are computed.
-    pub fn set_regime(&mut self, regime: u8) { self.regime = regime; }
+    pub fn set_regime(&mut self, regime: u8) {
+        if self.q4k_variant=="metadata" && regime!=self.regime {
+            for w in std::iter::once(&mut self.wcls)
+                .chain(self.l_wq.iter_mut()).chain(self.l_wk.iter_mut()).chain(self.l_wv.iter_mut())
+                .chain(self.l_wo.iter_mut()).chain(self.l_w1.iter_mut()).chain(self.l_w2.iter_mut()).chain(self.l_w3.iter_mut()) {
+                w.set_q4_metadata(&self.device,regime==2);
+            }
+        }
+        self.regime = regime;
+    }
+
+    /// (Q4 matrices, equivalent raw bytes, resident buffer bytes, saved header bytes).
+    pub fn q4k_metadata_storage(&self) -> (usize,u64,u64,usize) {
+        let mut result=(0,0,0,0);
+        for w in std::iter::once(&self.wcls)
+            .chain(self.l_wq.iter()).chain(self.l_wk.iter()).chain(self.l_wv.iter())
+            .chain(self.l_wo.iter()).chain(self.l_w1.iter()).chain(self.l_w2.iter()).chain(self.l_w3.iter()) {
+            if w.kind==0 {
+                result.0+=1; result.1+=(w.n*w.k/256*144) as u64;result.2+=w.buf.length();
+                result.3+=w.q4_headers.as_ref().map_or(0,Vec::len);
+            }
+        }
+        result
+    }
+
+    /// Experimental implementation of regime-2's unchanged arithmetic contract.
+    /// Disabled by default; the environment flag is sampled only at construction.
+    pub fn q4k_cooperative_enabled(&self) -> bool { self.q4k_cooperative }
+    /// Actual RMS implementation; unsupported widths retain the existing scalar path.
+    pub fn rms_variant(&self) -> &'static str { if self.rms_cooperative {self.rms_variant}else{"current"} }
+    pub fn q4k_variant(&self) -> &'static str { self.q4k_variant }
+    pub fn q6k_cooperative_enabled(&self) -> bool { self.q6k_cooperative }
+    pub fn concurrent_dispatch_enabled(&self) -> bool { self.concurrent_dispatch }
+    pub fn attention_cooperative_enabled(&self) -> bool { self.attention_cooperative }
+    // The real-matrix pilot lost on the large classifier. Its current kernel
+    // remains selected; only hidden projections can use the cooperative path.
+    fn q6k_cooperative_for(&self, wt: &WBuf) -> bool {
+        self.q6k_cooperative && wt.kind == 1 && wt.k % 256 == 0 && (1..=64).contains(&(wt.k / 256))
+            && !std::ptr::eq(wt, &self.wcls)
+    }
+    pub fn q6k_cooperative_matrices(&self) -> usize {
+        [&self.l_wq, &self.l_wk, &self.l_wv, &self.l_wo, &self.l_w1, &self.l_w2, &self.l_w3]
+            .iter().flat_map(|v| v.iter()).filter(|w| self.q6k_cooperative_for(w)).count()
+    }
+
+    /// Opt-in, unchanged-arithmetic RMS implementation for widths 1..=8192.
+    pub fn rms_cooperative_enabled(&self) -> bool { self.rms_cooperative }
 
     /// Debug: run ONLY the layer's w2 (ffn_down) linear on `x` (hidden-dim) under the
     /// current regime, returning the dim-length output. Isolates one linear for testing.
@@ -251,9 +416,9 @@ impl MetalForward {
         let z = vec![0.0f32; self.dim];
         write_buf(&self.b_tmp_dim, &z);
         let cmd = self.queue.new_command_buffer();
-        let e = cmd.new_compute_command_encoder();
-        self.lin(e, &self.b_inner, 0, &self.l_w2[layer], &self.b_tmp_dim, 0);
-        e.end_encoding();
+        let e = self.encoding(cmd, false);
+        self.lin(&e, &self.b_inner, 0, &self.l_w2[layer], &self.b_tmp_dim, 0);
+        e.end();
         cmd.commit();
         cmd.wait_until_completed();
         unsafe { std::slice::from_raw_parts(self.b_tmp_dim.contents() as *const f32, self.dim) }.to_vec()
@@ -264,9 +429,9 @@ impl MetalForward {
         write_buf(&self.b_inner, x);
         write_buf(&self.b_tmp_dim, residual);
         let cmd = self.queue.new_command_buffer();
-        let e = cmd.new_compute_command_encoder();
-        self.lin_acc(e, &self.b_inner, 0, &self.l_w2[layer], &self.b_tmp_dim, 0);
-        e.end_encoding();
+        let e = self.encoding(cmd, false);
+        self.lin_acc(&e, &self.b_inner, 0, &self.l_w2[layer], &self.b_tmp_dim, 0);
+        e.end();
         cmd.commit();
         cmd.wait_until_completed();
         unsafe { std::slice::from_raw_parts(self.b_tmp_dim.contents() as *const f32, self.dim) }.to_vec()
@@ -299,25 +464,66 @@ impl MetalForward {
         }
     }
 
-    /// Encode one dispatch into an existing compute encoder (no encoder switch).
-    fn disp(&self, e: &metal::ComputeCommandEncoderRef, pl: &ComputePipelineState, bufs: &[(u64, &Buffer, u64)], scalars: &[(u64, &[u8])], threads: usize) {
-        e.set_compute_pipeline_state(pl);
-        for (idx, b, off) in bufs { e.set_buffer(*idx, Some(b), *off); }
-        for (idx, d) in scalars { e.set_bytes(*idx, d.len() as u64, d.as_ptr() as *const c_void); }
-        let tg = 64u64.min(threads as u64).max(1);
-        let groups = (threads as u64 + tg - 1) / tg;
-        e.dispatch_thread_groups(MTLSize::new(groups, 1, 1), MTLSize::new(tg, 1, 1));
+    #[cfg(feature = "profiling")]
+    pub fn take_last_profile(&self) -> Option<profiling::StepTiming> {
+        self.profiler.as_ref().and_then(|p| p.take())
+    }
+
+    fn encoding<'a>(&'a self, cmd: &'a CommandBufferRef, allow_profile: bool) -> Encoding<'a> {
+        #[cfg(feature = "profiling")]
+        let profiler = self.profiler.as_ref().filter(|p| allow_profile && p.split);
+        #[cfg(not(feature = "profiling"))]
+        let _ = allow_profile;
+        #[cfg(feature = "profiling")]
+        let raw = if profiler.is_some() { None } else { Some(if self.concurrent_dispatch { cmd.compute_command_encoder_with_dispatch_type(metal::MTLDispatchType::Concurrent) } else { cmd.new_compute_command_encoder() }) };
+        #[cfg(not(feature = "profiling"))]
+        let raw = Some(if self.concurrent_dispatch { cmd.compute_command_encoder_with_dispatch_type(metal::MTLDispatchType::Concurrent) } else { cmd.new_compute_command_encoder() });
+        Encoding {
+            raw,
+            #[cfg(feature = "profiling")]
+            command: cmd,
+            #[cfg(feature = "profiling")]
+            profiler,
+        }
+    }
+
+    /// Production dispatches share an encoder; opt-in profiling can split passes.
+    fn disp(&self, e: &Encoding<'_>, pl: &ComputePipelineState, bufs: &[(u64, &Buffer, u64)], scalars: &[(u64, &[u8])], threads: usize) {
+        let encode = |raw: &metal::ComputeCommandEncoderRef| {
+            raw.set_compute_pipeline_state(pl);
+            for (idx, b, off) in bufs { raw.set_buffer(*idx, Some(b), *off); }
+            for (idx, d) in scalars { raw.set_bytes(*idx, d.len() as u64, d.as_ptr() as *const c_void); }
+            let tg = 64u64.min(threads as u64).max(1);
+            let groups = (threads as u64 + tg - 1) / tg;
+            raw.dispatch_thread_groups(MTLSize::new(groups, 1, 1), MTLSize::new(tg, 1, 1));
+        };
+        if let Some(raw) = e.raw { encode(raw); }
+        #[cfg(feature = "profiling")]
+        if let Some(profiler) = e.profiler {
+            profiler.encode_dispatch(e.command, pl, scalars, threads, encode);
+        }
     }
     /// Order a later dispatch after earlier writes to `bufs` (bit-exact dependency).
-    fn barr(&self, e: &metal::ComputeCommandEncoderRef, bufs: &[&Buffer]) {
-        let r: Vec<&metal::ResourceRef> = bufs.iter().map(|&b| -> &metal::ResourceRef { b }).collect();
-        e.memory_barrier_with_resources(&r);
+    fn barr(&self, e: &Encoding<'_>, bufs: &[&Buffer]) {
+        if let Some(raw) = e.raw {
+            let r: Vec<&metal::ResourceRef> = bufs.iter().map(|&b| -> &metal::ResourceRef { b }).collect();
+            raw.memory_barrier_with_resources(&r);
+        }
+        // Split profiling passes use Metal's tracked-resource pass dependencies.
+    }
+
+    fn rms(&self, e: &Encoding<'_>, x: &Buffer, weight: &Buffer, out: &Buffer) {
+        let (pipeline, threads) = if self.rms_cooperative {
+            (&self.pl_rms_cooperative, 64)
+        } else { (&self.pl_rms, 1) };
+        self.disp(e, pipeline, &[(0, x, 0), (1, weight, 0), (2, out, 0)],
+            &[(3, bytes(&[self.dim as u32, 1u32])), (4, bytes(&[self.rms_eps]))], threads);
     }
 
     /// Encode one quantized linear: out[wt.n] = W . in[wt.k]. Q4_K is a single
     /// dispatch; Q6_K quantizes the input ONCE (shared across all output rows)
     /// then does the integer dot — instead of re-quantizing x per row.
-    fn lin(&self, e: &metal::ComputeCommandEncoderRef, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
+    fn lin(&self, e: &Encoding<'_>, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
         let nsuper = wt.k / 256;
         let dims = [wt.k as u32, wt.n as u32, nsuper as u32];
         // Q8_0 / Q5_0: dequant each row + canonical dot (regime-independent).
@@ -330,6 +536,7 @@ impl MetalForward {
             return;
         }
         if self.regime == 3 {
+            if self.concurrent_dispatch { self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs, &self.b_q8_bsums]); }
             self.disp(e, &self.pl_q8_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0), (3, &self.b_q8_bsums, 0)],
                 &[(4, bytes(&[nsuper as u32]))], nsuper);
@@ -346,13 +553,21 @@ impl MetalForward {
             return;
         }
         if wt.kind == 1 {
+            // WAR: a previous dot may still read this shared activation scratch.
+            if self.concurrent_dispatch { self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs]); }
             self.disp(e, &self.pl_q6k_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0)],
                 &[(3, bytes(&[nsuper as u32]))], nsuper);
             self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs]);
-            self.disp(e, &self.pl_q6k_dot,
+            let cooperative = self.q6k_cooperative_for(wt);
+            let pl = if cooperative { self.pl_q6k_cooperative.as_ref().unwrap() } else { &self.pl_q6k_dot };
+            self.disp(e, pl,
                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
-                &[(4, bytes(&dims))], wt.n);
+                &[(4, bytes(&dims))], wt.n * if cooperative { 8 } else { 1 });
+        } else if self.q4k_cooperative {
+            self.disp(e, &self.pl_q4k_cooperative,
+                &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+                &[(3, bytes(&dims))], wt.n * 8);
         } else {
             self.disp(e, &self.pl_q4k_linear, // fused dequant + canonical dot on quantized Q4_K
                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
@@ -363,7 +578,7 @@ impl MetalForward {
     /// Like `lin`, but accumulates: out[i] += (W . in)[i]. Fuses a residual add
     /// into the linear (removes a separate add dispatch). out must already hold
     /// the residual.
-    fn lin_acc(&self, e: &metal::ComputeCommandEncoderRef, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
+    fn lin_acc(&self, e: &Encoding<'_>, in_buf: &Buffer, in_off: u64, wt: &WBuf, out_buf: &Buffer, out_off: u64) {
         let nsuper = wt.k / 256;
         let dims = [wt.k as u32, wt.n as u32, nsuper as u32];
         if wt.kind == 2 {
@@ -375,6 +590,7 @@ impl MetalForward {
             return;
         }
         if self.regime == 3 {
+            if self.concurrent_dispatch { self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs, &self.b_q8_bsums]); }
             self.disp(e, &self.pl_q8_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0), (3, &self.b_q8_bsums, 0)],
                 &[(4, bytes(&[nsuper as u32]))], nsuper);
@@ -391,13 +607,21 @@ impl MetalForward {
             return;
         }
         if wt.kind == 1 {
+            // WAR: a previous dot may still read this shared activation scratch.
+            if self.concurrent_dispatch { self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs]); }
             self.disp(e, &self.pl_q6k_quant,
                 &[(0, in_buf, in_off), (1, &self.b_q8_dx, 0), (2, &self.b_q8_qs, 0)],
                 &[(3, bytes(&[nsuper as u32]))], nsuper);
             self.barr(e, &[&self.b_q8_dx, &self.b_q8_qs]);
-            self.disp(e, &self.pl_q6k_dot_acc,
+            let cooperative = self.q6k_cooperative_for(wt);
+            let pl = if cooperative { self.pl_q6k_cooperative_acc.as_ref().unwrap() } else { &self.pl_q6k_dot_acc };
+            self.disp(e, pl,
                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
-                &[(4, bytes(&dims))], wt.n);
+                &[(4, bytes(&dims))], wt.n * if cooperative { 8 } else { 1 });
+        } else if self.q4k_cooperative {
+            self.disp(e, &self.pl_q4k_cooperative_acc,
+                &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+                &[(3, bytes(&dims))], wt.n * 8);
         } else {
             self.disp(e, &self.pl_q4k_linear_acc, // fused dequant + canonical dot on quantized Q4_K
                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
@@ -420,6 +644,15 @@ impl MetalForward {
 
     /// Logits for `token` at sequence position `pos`, advancing the (GPU) KV cache.
     pub fn step(&mut self, token: u32, pos: usize) -> Vec<f32> {
+        #[cfg(feature = "profiling")]
+        let clocks = self.profiler.as_ref().map(|p| {
+            p.begin();
+            let mut cpu = 0; let mut gpu = 0;
+            self.device.sample_timestamps(&mut cpu, &mut gpu);
+            (cpu, gpu)
+        });
+        #[cfg(feature = "profiling")]
+        let profile_start = std::time::Instant::now();
         let (c, s) = self.rope_cache(pos);
         write_buf(&self.b_cos, &c);
         write_buf(&self.b_sin, &s);
@@ -432,65 +665,82 @@ impl MetalForward {
         let koff = (pos * kv_dim * 4) as u64;
         let nsuper_dim = (dim / 256) as u32;
         let head_size = self.head_size;
-        let feat_rows = [dim as u32, 1u32];
-        let eps = [self.rms_eps];
 
         let _ = nsuper_dim;
+        #[cfg(feature = "profiling")]
+        let prepare_done = std::time::Instant::now();
         let cmd = self.queue.new_command_buffer();
-        let e = cmd.new_compute_command_encoder();
+        let e = self.encoding(cmd, true);
 
         for layer in 0..self.n_layers {
-            self.disp(e, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.l_rms_att[layer], 0), (2, &self.b_xb, 0)],
-                &[(3, bytes(&feat_rows)), (4, bytes(&eps))], 1);
-            self.barr(e, &[&self.b_xb]);
+            self.rms(&e, &self.b_x, &self.l_rms_att[layer], &self.b_xb);
+            self.barr(&e, &[&self.b_xb]);
             // q/k/v are independent (all read b_xb) — no barrier between them
-            self.lin(e, &self.b_xb, 0, &self.l_wq[layer], &self.b_q, 0);
-            self.lin(e, &self.b_xb, 0, &self.l_wk[layer], &self.key_cache[layer], koff);
-            self.lin(e, &self.b_xb, 0, &self.l_wv[layer], &self.value_cache[layer], koff);
-            self.barr(e, &[&self.b_q, &self.key_cache[layer], &self.value_cache[layer]]);
+            self.lin(&e, &self.b_xb, 0, &self.l_wq[layer], &self.b_q, 0);
+            self.lin(&e, &self.b_xb, 0, &self.l_wk[layer], &self.key_cache[layer], koff);
+            self.lin(&e, &self.b_xb, 0, &self.l_wv[layer], &self.value_cache[layer], koff);
+            self.barr(&e, &[&self.b_q, &self.key_cache[layer], &self.value_cache[layer]]);
             // optional QKV bias (Qwen2): q/k/v += bias, after projection and BEFORE rope.
             if self.l_bq[layer].is_some() {
                 let qo = self.n_heads * head_size;
-                self.disp(e, &self.pl_add, &[(0, &self.b_q, 0), (1, self.l_bq[layer].as_ref().unwrap(), 0)], &[(2, bytes(&[qo as u32]))], qo);
-                self.disp(e, &self.pl_add, &[(0, &self.key_cache[layer], koff), (1, self.l_bk[layer].as_ref().unwrap(), 0)], &[(2, bytes(&[kv_dim as u32]))], kv_dim);
-                self.disp(e, &self.pl_add, &[(0, &self.value_cache[layer], koff), (1, self.l_bv[layer].as_ref().unwrap(), 0)], &[(2, bytes(&[kv_dim as u32]))], kv_dim);
-                self.barr(e, &[&self.b_q, &self.key_cache[layer], &self.value_cache[layer]]);
+                self.disp(&e, &self.pl_add, &[(0, &self.b_q, 0), (1, self.l_bq[layer].as_ref().unwrap(), 0)], &[(2, bytes(&[qo as u32]))], qo);
+                self.disp(&e, &self.pl_add, &[(0, &self.key_cache[layer], koff), (1, self.l_bk[layer].as_ref().unwrap(), 0)], &[(2, bytes(&[kv_dim as u32]))], kv_dim);
+                self.disp(&e, &self.pl_add, &[(0, &self.value_cache[layer], koff), (1, self.l_bv[layer].as_ref().unwrap(), 0)], &[(2, bytes(&[kv_dim as u32]))], kv_dim);
+                self.barr(&e, &[&self.b_q, &self.key_cache[layer], &self.value_cache[layer]]);
             }
             let rope = if self.rope_neox { &self.pl_rope_neox } else { &self.pl_rope };
-            self.disp(e, rope, &[(0, &self.b_q, 0), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.b_q, 0)],
+            self.disp(&e, rope, &[(0, &self.b_q, 0), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.b_q, 0)],
                 &[(4, bytes(&[1u32, self.n_heads as u32, head_size as u32]))], self.n_heads);
             let n_kv = kv_dim / head_size;
-            self.disp(e, rope, &[(0, &self.key_cache[layer], koff), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.key_cache[layer], koff)],
+            self.disp(&e, rope, &[(0, &self.key_cache[layer], koff), (1, &self.b_cos, 0), (2, &self.b_sin, 0), (3, &self.key_cache[layer], koff)],
                 &[(4, bytes(&[1u32, n_kv as u32, head_size as u32]))], n_kv);
-            self.barr(e, &[&self.b_q, &self.key_cache[layer]]);
-            self.disp(e, &self.pl_attn,
+            self.barr(&e, &[&self.b_q, &self.key_cache[layer]]);
+            let cooperative_attention = self.attention_cooperative && pos < 512;
+            let attention = if cooperative_attention {
+                self.pl_attn_cooperative.as_ref().unwrap()
+            } else { &self.pl_attn };
+            self.disp(&e, attention,
                 &[(0, &self.b_q, 0), (1, &self.key_cache[layer], 0), (2, &self.value_cache[layer], 0), (3, &self.b_att, 0)],
-                &[(4, bytes(&[self.n_heads as u32, head_size as u32, kv_dim as u32, self.kv_mul as u32, pos as u32]))], self.n_heads);
-            self.barr(e, &[&self.b_att]);
-            self.lin_acc(e, &self.b_att, 0, &self.l_wo[layer], &self.b_x, 0); // wo + residual
-            self.barr(e, &[&self.b_x]);
-            self.disp(e, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.l_rms_ffn[layer], 0), (2, &self.b_xb, 0)],
-                &[(3, bytes(&feat_rows)), (4, bytes(&eps))], 1);
-            self.barr(e, &[&self.b_xb]);
+                &[(4, bytes(&[self.n_heads as u32, head_size as u32, kv_dim as u32, self.kv_mul as u32, pos as u32]))],
+                self.n_heads * if cooperative_attention { 64 } else { 1 });
+            self.barr(&e, &[&self.b_att]);
+            self.lin_acc(&e, &self.b_att, 0, &self.l_wo[layer], &self.b_x, 0); // wo + residual
+            self.barr(&e, &[&self.b_x]);
+            self.rms(&e, &self.b_x, &self.l_rms_ffn[layer], &self.b_xb);
+            self.barr(&e, &[&self.b_xb]);
             // gate/up are independent (both read b_xb)
-            self.lin(e, &self.b_xb, 0, &self.l_w1[layer], &self.b_gate, 0);
-            self.lin(e, &self.b_xb, 0, &self.l_w3[layer], &self.b_up, 0);
-            self.barr(e, &[&self.b_gate, &self.b_up]);
-            self.disp(e, &self.pl_silu_mul, &[(0, &self.b_gate, 0), (1, &self.b_up, 0), (2, &self.b_inner, 0)],
+            self.lin(&e, &self.b_xb, 0, &self.l_w1[layer], &self.b_gate, 0);
+            self.lin(&e, &self.b_xb, 0, &self.l_w3[layer], &self.b_up, 0);
+            self.barr(&e, &[&self.b_gate, &self.b_up]);
+            self.disp(&e, &self.pl_silu_mul, &[(0, &self.b_gate, 0), (1, &self.b_up, 0), (2, &self.b_inner, 0)],
                 &[(3, bytes(&[self.hidden as u32]))], self.hidden);
-            self.barr(e, &[&self.b_inner]);
-            self.lin_acc(e, &self.b_inner, 0, &self.l_w2[layer], &self.b_x, 0); // w2 (down) + residual
-            self.barr(e, &[&self.b_x]);
+            self.barr(&e, &[&self.b_inner]);
+            self.lin_acc(&e, &self.b_inner, 0, &self.l_w2[layer], &self.b_x, 0); // w2 (down) + residual
+            self.barr(&e, &[&self.b_x]);
         }
-        self.disp(e, &self.pl_rms, &[(0, &self.b_x, 0), (1, &self.rms_final, 0), (2, &self.b_xb, 0)],
-            &[(3, bytes(&feat_rows)), (4, bytes(&eps))], 1);
-        self.barr(e, &[&self.b_xb]);
-        self.lin(e, &self.b_xb, 0, &self.wcls, &self.b_logits, 0);
+        self.rms(&e, &self.b_x, &self.rms_final, &self.b_xb);
+        self.barr(&e, &[&self.b_xb]);
+        self.lin(&e, &self.b_xb, 0, &self.wcls, &self.b_logits, 0);
 
-        e.end_encoding();
+        e.end();
+        #[cfg(feature = "profiling")]
+        let encode_done = std::time::Instant::now();
         cmd.commit();
         cmd.wait_until_completed();
-        unsafe { std::slice::from_raw_parts(self.b_logits.contents() as *const f32, self.vocab) }.to_vec()
+        #[cfg(feature = "profiling")]
+        let wait_done = std::time::Instant::now();
+        let row = unsafe { std::slice::from_raw_parts(self.b_logits.contents() as *const f32, self.vocab) }.to_vec();
+        #[cfg(feature = "profiling")]
+        if let (Some(profiler), Some(clocks)) = (&self.profiler, clocks) {
+            let read_done = std::time::Instant::now();
+            assert_eq!(cmd.status(), metal::MTLCommandBufferStatus::Completed, "profiled GPU command failed");
+            profiler.finish(&self.device, cmd, clocks,
+                (prepare_done - profile_start).as_secs_f64(),
+                (encode_done - prepare_done).as_secs_f64(),
+                (wait_done - encode_done).as_secs_f64(),
+                (read_done - wait_done).as_secs_f64());
+        }
+        row
     }
 }
 

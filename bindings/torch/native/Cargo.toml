@@ -1,0 +1,15 @@
+[package]
+name = "vitni-torch-native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+vitni-tensor = { path = "../../.." }
+# Pin the core's math dependency in the standalone binding build.
+libm = "=0.2.16"
