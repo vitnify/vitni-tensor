@@ -1,4 +1,4 @@
-//! Standalone research checks; active Metal engine is unchanged.
+//! Standalone prototype checks plus a regression for the active SiLU math.
 #[path = "support/q4_prepare_swiglu_gpu.rs"]
 mod gpu;
 #[path = "../src/q4_metadata.rs"]
@@ -123,8 +123,7 @@ fn fused_gate_up_swiglu_matches_cpu() {
             let mut g = vec![0.; m];
             let mut u = g.clone();
             linear_q4_k_fused(&x, &w, &mut g, 1, k, m).unwrap();
-            // Keep the CPU-comparison activation cases within finite-exp territory;
-            // preserve the existing baseline overflow limitation in a separate test.
+            // Ordinary finite-exp coverage; overflow coverage is separate below.
             let mut bound = g.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
             while bound > 16.0 {
                 for v in &mut x {
@@ -170,10 +169,10 @@ fn fused_gate_up_swiglu_matches_cpu() {
 
 #[test]
 #[ignore = "requires a real Metal GPU"]
-fn baseline_swiglu_exp_overflow_limitation_is_unchanged() {
+fn swiglu_exp_overflow_matches_cpu() {
     let gpu = gpu::Gpu::new();
     let (k, m) = (256, 1);
-    let mut mismatches = 0;
+    let mut overflow_cases = 0;
     for seed in [7, 0x12345678, 0xfedcba9876543210] {
         let (x, w, init) = fixture(k, m, seed);
         let (_, w2, _) = fixture(k, m, seed ^ 0x99999999);
@@ -194,16 +193,22 @@ fn baseline_swiglu_exp_overflow_limitation_is_unchanged() {
         gpu::check(&bu, &eu, "overflow up versus CPU");
         for debug in [false, true] {
             let (candidate, _, _, _, _) = gpu.fused(&xb, [&wg, &wu], &init, k, m, true, debug, 1);
-            gpu::check(&candidate, &base, "preserve baseline overflow behavior");
+            gpu::check(&candidate, &base, "fused and separate overflow behavior");
         }
-        if base[0].to_bits() != cpu.to_bits() {
-            mismatches += 1;
-            assert!(libm::expf(-g[0]).is_infinite());
-            eprintln!("KNOWN BASELINE LIMITATION: seed={seed} g={} up={} CPU={:08x} Metal={:08x}; fusion identical to baseline",g[0],u[0],cpu.to_bits(),base[0].to_bits());
+        assert_eq!(
+            base[0].to_bits(),
+            cpu.to_bits(),
+            "seed={seed} g={} up={}",
+            g[0],
+            u[0]
+        );
+        if libm::expf(-g[0]).is_infinite() {
+            overflow_cases += 1;
+            assert_eq!(base[0].abs().to_bits(), 0);
         }
     }
     assert!(
-        mismatches > 0,
-        "known baseline limitation must remain visible"
+        overflow_cases > 0,
+        "the original overflow regression must actually execute"
     );
 }

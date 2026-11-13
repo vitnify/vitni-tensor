@@ -42,6 +42,13 @@ static inline float vt_scalbnf(float x, int n) {
 
 static inline float div_sw(float a, float b) {
     uint sgn = (as_type<uint>(a) ^ as_type<uint>(b)) & 0x80000000u;
+    // The reciprocal seed below only handles finite divisors. In particular,
+    // SiLU's exp(-x) can overflow for finite negative x: CPU x / +inf is
+    // signed zero. Preserve those bits instead of refining an invalid seed.
+    if ((as_type<uint>(b) & 0x7fffffffu) == 0x7f800000u &&
+        (as_type<uint>(a) & 0x7fffffffu) < 0x7f800000u) {
+        return as_type<float>(sgn);
+    }
     float ba = as_type<float>(as_type<uint>(b) & 0x7fffffffu);
     float aa = as_type<float>(as_type<uint>(a) & 0x7fffffffu);
     uint j = 0x7EF127EAu - as_type<uint>(ba);
@@ -421,6 +428,61 @@ kernel void attention_cooperative(
     }
 }
 
+// SiLU keeps the CPU's x/(1+exp(-x)) rounding, including its overflow-to-zero
+// behavior. Scale both operands exactly when the reciprocal would be subnormal.
+static inline float vt_silu(float x) {
+    uint word = as_type<uint>(x);
+    uint mag = word & 0x7fffffffu;
+    if (mag < 0x01000000u) {
+        // exp(-x) rounds to 1 here, so the denominator is exactly 2. A bitwise
+        // half preserves subnormal results even on a flush-to-zero device.
+        uint halved = (mag >> 1) + ((mag & 3u) == 3u ? 1u : 0u);
+        return as_type<float>((word & 0x80000000u) | halved);
+    }
+    float denominator = 1.0f + vt_expf(-x);
+    uint denom = as_type<uint>(denominator);
+    if (denom >= 0x7b800000u && mag < 0x7f800000u) { // denominator >= 2^120
+        if (denom == 0x7f800000u) return as_type<float>(word & 0x80000000u);
+        return div_sw(x * 0x1p-64f, denominator * 0x1p-64f);
+    }
+    return div_sw(x, denominator);
+}
+
+static inline ulong vt_round_shift(ulong value, int shift) {
+    if (shift <= 0) return value << uint(-shift);
+    if (shift >= 64) return 0ul;
+    ulong integral = value >> uint(shift);
+    ulong residual = value & ((1ul << uint(shift)) - 1ul);
+    ulong halfway = 1ul << uint(shift - 1);
+    return integral + ulong(residual > halfway || (residual == halfway && (integral & 1ul)));
+}
+
+// Ordinary normal products stay on the hardware path. Only inputs/results in
+// the underflow range use the exact 24x24-bit product and ties-to-even packing.
+static inline float vt_silu_product(float a, float b) {
+    uint wa = as_type<uint>(a), wb = as_type<uint>(b);
+    uint ma = wa & 0x7fffffffu, mb = wb & 0x7fffffffu;
+    uint ea = ma >> 23, eb = mb >> 23;
+    if ((ea != 0u && eb != 0u && ea + eb >= 128u) || ea == 255u || eb == 255u)
+        return a * b;
+    uint sign = (wa ^ wb) & 0x80000000u;
+    uint sa = (ma & 0x7fffffu) | (ea ? 0x800000u : 0u);
+    uint sb = (mb & 0x7fffffu) | (eb ? 0x800000u : 0u);
+    ulong product = ulong(sa) * ulong(sb);
+    if (product == 0ul) return as_type<float>(sign);
+    int exponent = (ea ? int(ea) - 150 : -149) + (eb ? int(eb) - 150 : -149);
+    int top = 63 - int(clz(product));
+    int unbiased = top + exponent;
+    if (unbiased < -126) {
+        uint packed = uint(vt_round_shift(product, -149 - exponent));
+        return as_type<float>(sign | packed);
+    }
+    ulong significand = vt_round_shift(product, top - 23);
+    if (significand == 0x1000000ul) { significand >>= 1; unbiased++; }
+    if (unbiased > 127) return as_type<float>(sign | 0x7f800000u);
+    return as_type<float>(sign | (uint(unbiased + 127) << 23) | (uint(significand) & 0x7fffffu));
+}
+
 // SwiGLU inner: silu(gate) * up, fused so `up` never leaves the GPU.
 kernel void silu_mul(
     device const float* gate [[buffer(0)]],
@@ -431,7 +493,7 @@ kernel void silu_mul(
 {
     if (gid >= n) return;
     float g = gate[gid];
-    out[gid] = div_sw(g, 1.0f + vt_expf(-g)) * up[gid];
+    out[gid] = vt_silu_product(vt_silu(g), up[gid]);
 }
 
 // Residual add, in place: x[i] += y[i]. (Plain add — matches the CPU.)
@@ -454,7 +516,7 @@ kernel void silu_kernel(
 {
     if (gid >= n) return;
     float v = x[gid];
-    out[gid] = div_sw(v, 1.0f + vt_expf(-v));
+    out[gid] = vt_silu(v);
 }
 
 // Opt-in local contraction-off RMS: unchanged operations, no volatile intermediates.

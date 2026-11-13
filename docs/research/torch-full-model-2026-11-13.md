@@ -1,5 +1,9 @@
 # Resident full-model PyTorch wrapper: research validation
 
+This report records the pre-fix wrapper at `e773662`. The subsequent
+[SiLU correction and validation](silu-overflow-2026-11-13.md) supersede its
+SiLU-overflow limitation; its original measurements are preserved below.
+
 Date: 2026-11-13. Branch: `research/torch-full-model-2026-11-13`.
 Base: `v0.3.2` (`9cc5ac50671bcdbee144d3fb1214fe87b63e6a55`).
 The Python research package is `vitni-torch` 0.1.0a2. This work remains

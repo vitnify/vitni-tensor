@@ -5,6 +5,10 @@ This project follows [Semantic Versioning](https://semver.org).
 
 ## [Unreleased] — full-model PyTorch research
 
+- Metal SiLU/SwiGLU: preserve CPU signed zero when exp overflows, normalize
+  large finite divisors, and round subnormal activation/products exactly.
+  CPU arithmetic and numerical-regime anchors are unchanged. Validation:
+  [SiLU research report](docs/research/silu-overflow-2026-11-13.md).
 - Opt-in eager `VitniModel` module over resident CPU/optimized-Metal engine
   instances, with full-logit tensors and the existing generation/receipt driver.
 - Explicit per-instance `MetalOptions`; existing environment-based construction

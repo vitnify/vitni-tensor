@@ -81,8 +81,11 @@ and weights hash. Receipt equality by itself does not compare all logits.
   without a full-graph `torch.compile`/export claim.
 - The earlier individual operators' `[2**-32,2**32]` input restriction concerns
   their PyTorch shader path. This full-engine API accepts token IDs and uses
-  the native engine instead. It does not establish universal IEEE-754 equality;
-  the existing Metal SiLU exponential-overflow edge remains unresolved.
+  the native engine instead. The finite-input Metal SiLU overflow, large-divisor
+  and underflow cases are corrected on this research branch; see
+  [the fix and validation](../docs/research/silu-overflow-2026-11-13.md).
+  These tests do not establish universal IEEE-754 equality for every engine op
+  or define cross-hardware NaN-payload behavior.
 - Physical CUDA, other model families and other GPU generations are not
   established by this research run.
 

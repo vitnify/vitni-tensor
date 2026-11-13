@@ -17,7 +17,7 @@ static inline void q4_gate_up_body(
         float g = dots[tid / 8u];
         float u = dots[tid / 8u + 1u];
         if (debug) { gate_debug[row] = g; up_debug[row] = u; }
-        out[row] = div_sw(g, 1.0f + vt_expf(-g)) * u;
+        out[row] = vt_silu_product(vt_silu(g), u);
     }
 }
 
