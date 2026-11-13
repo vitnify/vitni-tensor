@@ -1,0 +1,153 @@
+diff --git a/metal/src/lib.rs b/metal/src/lib.rs
+index e173b80..44634b7 100644
+--- a/metal/src/lib.rs
++++ b/metal/src/lib.rs
+@@ -127,6 +127,7 @@ pub struct MetalForward {
+     pl_q6k_cooperative: Option<ComputePipelineState>,
+     pl_q6k_cooperative_acc: Option<ComputePipelineState>,
+     q6k_cooperative: bool,
++    q6k_within_block: bool,
+     pl_q4k_dequant: ComputePipelineState,
+     pl_rms: ComputePipelineState,
+     pl_rms_cooperative: ComputePipelineState,
+@@ -264,9 +265,12 @@ impl MetalForward {
+             Ok(_) => return Err(MetalError::Compile("unknown VITNI_METAL_RMS_VARIANT".into())),
+         };
+         let requested_q6k = std::env::var("VITNI_METAL_Q6K_COOPERATIVE").as_deref() == Ok("1");
++        let q6k_within_block = requested_q6k && std::env::var("VITNI_METAL_Q6K_WITHIN_BLOCK").as_deref() == Ok("1");
++        let within_source = if q6k_within_block { Some(format!("{Q6K_INT}\n{}", include_str!("../../kernels/q6k_within_block.metal"))) } else { None };
++        let q6_source = within_source.as_deref().unwrap_or(Q6K_INT);
+         let (pl_q6k_cooperative, pl_q6k_cooperative_acc) = if requested_q6k {
+-            (Some(pipeline(&device, Q6K_INT, "q6k_integer_dot_cooperative")?),
+-             Some(pipeline(&device, Q6K_INT, "q6k_integer_dot_cooperative_acc")?))
++            (Some(pipeline(&device, q6_source, if q6k_within_block {"q6k_integer_dot_within_block"} else {"q6k_integer_dot_cooperative"})?),
++             Some(pipeline(&device, q6_source, if q6k_within_block {"q6k_integer_dot_within_block_acc"} else {"q6k_integer_dot_cooperative_acc"})?))
+         } else { (None, None) };
+         let q6k_cooperative = requested_q6k
+             && pl_q6k_cooperative.as_ref().unwrap().thread_execution_width() == 32
+@@ -284,6 +288,7 @@ impl MetalForward {
+             pl_q6k_cooperative,
+             pl_q6k_cooperative_acc,
+             q6k_cooperative,
++            q6k_within_block,
+             pl_q4k_linear: pipeline(&device, Q4K, "q4k_linear")?,
+             pl_q4k_linear_acc: pipeline(&device, Q4K, "q4k_linear_acc")?,
+             pl_q4k_cooperative: pipeline(&device, &cooperative_source, if q4k_variant=="metadata" {"q4k_linear_metadata"} else {"q4k_linear_cooperative"})?,
+@@ -387,6 +392,7 @@ impl MetalForward {
+     pub fn rms_variant(&self) -> &'static str { if self.rms_cooperative {self.rms_variant}else{"current"} }
+     pub fn q4k_variant(&self) -> &'static str { self.q4k_variant }
+     pub fn q6k_cooperative_enabled(&self) -> bool { self.q6k_cooperative }
++    pub fn q6k_within_block_enabled(&self) -> bool { self.q6k_cooperative && self.q6k_within_block }
+     pub fn attention_cooperative_enabled(&self) -> bool { self.attention_cooperative }
+     // The real-matrix pilot lost on the large classifier. Its current kernel
+     // remains selected; only hidden projections can use the cooperative path.
+@@ -553,7 +559,7 @@ impl MetalForward {
+             let pl = if cooperative { self.pl_q6k_cooperative.as_ref().unwrap() } else { &self.pl_q6k_dot };
+             self.disp(e, pl,
+                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
+-                &[(4, bytes(&dims))], wt.n * if cooperative { 8 } else { 1 });
++                &[(4, bytes(&dims))], wt.n * if cooperative { if self.q6k_within_block { 32 } else { 8 } } else { 1 });
+         } else if self.q4k_cooperative {
+             self.disp(e, &self.pl_q4k_cooperative,
+                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+@@ -604,7 +610,7 @@ impl MetalForward {
+             let pl = if cooperative { self.pl_q6k_cooperative_acc.as_ref().unwrap() } else { &self.pl_q6k_dot_acc };
+             self.disp(e, pl,
+                 &[(0, &self.b_q8_dx, 0), (1, &self.b_q8_qs, 0), (2, &wt.buf, 0), (3, out_buf, out_off)],
+-                &[(4, bytes(&dims))], wt.n * if cooperative { 8 } else { 1 });
++                &[(4, bytes(&dims))], wt.n * if cooperative { if self.q6k_within_block { 32 } else { 8 } } else { 1 });
+         } else if self.q4k_cooperative {
+             self.disp(e, &self.pl_q4k_cooperative_acc,
+                 &[(0, in_buf, in_off), (1, &wt.buf, 0), (2, out_buf, out_off)],
+diff --git a/kernels/q6k_within_block.metal b/kernels/q6k_within_block.metal
+new file mode 100644
+index 0000000..0c55db6
+--- /dev/null
++++ b/kernels/q6k_within_block.metal
+@@ -0,0 +1,86 @@
++// Research fixture: four integer lanes per block, eight blocks per SIMD row.
++// Valid-domain bound for every signed integer sum, including reassociation:
++// 256 * 32 * 127 * 128 = 133169152 < INT32_MAX. Quantization is unchanged.
++static inline int q6k_within_block_partial(device const char* qs,
++    device const uchar* blk, uint ilane) {
++    uint hb = ilane / 2u, pass = ilane % 2u;
++    uint ql_p = hb * 64u, qh_p = hb * 32u;
++    uint sc_p = hb * 8u + pass, y = hb * 128u;
++    int a1 = 0, a2 = 0, a3 = 0, a4 = 0;
++    for (uint l = pass * 16u; l < pass * 16u + 16u; l++) {
++        uint h = (uint)blk[128u + qh_p + l];
++        uint b0 = (uint)blk[ql_p + l], b1 = (uint)blk[ql_p + l + 32u];
++        a1 += ((int)((b0 & 0x0Fu) | ((h & 0x03u) << 4)) - 32) * (int)qs[y + l];
++        a2 += ((int)((b1 & 0x0Fu) | (((h >> 2) & 0x03u) << 4)) - 32) * (int)qs[y + l + 32u];
++        a3 += ((int)((b0 >> 4) | (((h >> 4) & 0x03u) << 4)) - 32) * (int)qs[y + l + 64u];
++        a4 += ((int)((b1 >> 4) | (((h >> 6) & 0x03u) << 4)) - 32) * (int)qs[y + l + 96u];
++    }
++    return (int)((char)blk[192u + sc_p]) * a1
++         + (int)((char)blk[192u + sc_p + 2u]) * a2
++         + (int)((char)blk[192u + sc_p + 4u]) * a3
++         + (int)((char)blk[192u + sc_p + 6u]) * a4;
++}
++
++static inline float q6k_within_block_dot(device const float* xdx,
++    device const char* xqs, device const uchar* w, uint M, uint nsuper,
++    uint gid, uint tid) {
++#pragma METAL fp contract(off)
++    uint row = gid / 32u, simd_tid = tid % 32u;
++    uint blane = simd_tid / 4u, ilane = simd_tid % 4u;
++    float roots[8];
++    uint nchunks = 0u;
++    for (uint done = 0u; done < nsuper; done += 8u) {
++        uint len = min(8u, nsuper - done), s = done + blane;
++        bool active = row < M && blane < len;
++        int partial = 0;
++        if (active) {
++            device const uchar* blk = w + ((ulong)row * nsuper + s) * Q6K_BYTES;
++            partial = q6k_within_block_partial(xqs + s * 256u, blk, ilane);
++        }
++        // All SIMD lanes participate, including invalid row/block tails.
++        int acc = partial + simd_shuffle_xor(partial, 1u);
++        acc += simd_shuffle_xor(acc, 2u);
++        float value = 0.0f;
++        if (active && ilane == 0u) {
++            device const uchar* blk = w + ((ulong)row * nsuper + s) * Q6K_BYTES;
++            float dw = f16_to_f32((ushort)((uint)blk[208] | ((uint)blk[209] << 8)));
++            // Same two f32 multiplications and rounding boundaries as baseline.
++            value = dw * xdx[s] * (float)acc;
++        }
++        // Original adjacent-pair float tree, reading one value every four lanes.
++        uint count = len;
++        while (count > 1u) {
++            uint half_count = (count + 1u) / 2u, u = 2u * blane;
++            float left = simd_shuffle(value, 4u * (u & 7u));
++            float right = simd_shuffle(value, 4u * ((u + 1u) & 7u));
++            if (ilane == 0u && blane < half_count)
++                value = u + 1u < count ? left + right : left;
++            count = half_count;
++        }
++        if (simd_tid == 0u) roots[nchunks] = value;
++        nchunks++;
++    }
++    return simd_tid == 0u ? fixed_tree(roots, nchunks) : 0.0f;
++}
++
++kernel void q6k_integer_dot_within_block(
++    device const float* xdx [[buffer(0)]], device const char* xqs [[buffer(1)]],
++    device const uchar* w [[buffer(2)]], device float* out [[buffer(3)]],
++    constant uint* dims [[buffer(4)]], uint gid [[thread_position_in_grid]],
++    uint tid [[thread_index_in_threadgroup]]) {
++    if (dims[2] > 64u) return;
++    float dot = q6k_within_block_dot(xdx, xqs, w, dims[1], dims[2], gid, tid);
++    uint row = gid / 32u;
++    if (tid % 32u == 0u && row < dims[1]) out[row] = dot;
++}
++
++kernel void q6k_integer_dot_within_block_acc(
++    device const float* xdx [[buffer(0)]], device const char* xqs [[buffer(1)]],
++    device const uchar* w [[buffer(2)]], device float* out [[buffer(3)]],
++    constant uint* dims [[buffer(4)]], uint gid [[thread_position_in_grid]],
++    uint tid [[thread_index_in_threadgroup]]) {
++    if (dims[2] > 64u) return;
++    float dot = q6k_within_block_dot(xdx, xqs, w, dims[1], dims[2], gid, tid);
++    uint row = gid / 32u;
++    if (tid % 32u == 0u && row < dims[1]) out[row] = out[row] + dot;
++}

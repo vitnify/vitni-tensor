@@ -1,0 +1,483 @@
+{
+  "baseline": "retained concurrent metadata/RMS/Q6/attention",
+  "candidates_tested_separately": true,
+  "kernel_screens": {
+    "prepare": {
+      "pilot": {
+        "decision": {
+          "command": [
+            "<workspace>/outputs/vitni-metal-q4-prepare-swiglu-2026-11-12/bin/experiment-probe",
+            "prepare",
+            "3",
+            "<workspace>/outputs/vitni-metal-q4-prepare-swiglu-2026-11-12/prepare/pilot.json"
+          ],
+          "exit": 0,
+          "before": {
+            "utc": "2026-11-13T03:57:27.742992+00:00",
+            "values": [
+              4.14,
+              3.95,
+              4.53
+            ]
+          },
+          "after": {
+            "utc": "2026-11-13T03:57:28.256149+00:00",
+            "values": [
+              4.14,
+              3.95,
+              4.53
+            ]
+          },
+          "lower_load_qualified": true,
+          "gpu_sum_ratio": 2.1018632302605944,
+          "fixture_losses": 3,
+          "fixtures": 5,
+          "early_stop": true,
+          "all_bits_equal_cpu": true,
+          "guards_passed": true,
+          "automatic_all_fixture_stop": false,
+          "primary_model_gpu_sum_ratio": 2.1909814118521225,
+          "primary_model_fixture_losses": 3,
+          "primary_model_fixtures": 4,
+          "stop_reason": "User asked to stop clear slower trials: 110.2% aggregate regression, with 3/4 primary TinyLlama fixtures losing; all-five loss threshold alone was not crossed. Keep both fixture wins; do not integrate or extend this candidate."
+        },
+        "rows": [
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l0-wq",
+              "k": 2048,
+              "layer": 0,
+              "m": 2048,
+              "op": "wq"
+            },
+            "baseline_gpu_us": 64.36979128920939,
+            "candidate_gpu_us": 225.0468751299195,
+            "time_change_percent": 249.6156669497314
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l0-wk",
+              "k": 2048,
+              "layer": 0,
+              "m": 256,
+              "op": "wk"
+            },
+            "baseline_gpu_us": 40.984375118569005,
+            "candidate_gpu_us": 20.666666387114674,
+            "time_change_percent": -49.574279643582706
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l0-w1",
+              "k": 2048,
+              "layer": 0,
+              "m": 5632,
+              "op": "w1"
+            },
+            "baseline_gpu_us": 83.60937499674037,
+            "candidate_gpu_us": 238.58854183345102,
+            "time_change_percent": 185.36099192554988
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l2-w2",
+              "k": 5632,
+              "layer": 2,
+              "m": 2048,
+              "op": "w2"
+            },
+            "baseline_gpu_us": 139.69791689305566,
+            "candidate_gpu_us": 235.78906257171184,
+            "time_change_percent": 68.78495242861624
+          },
+          {
+            "model": "stories",
+            "fixture": {
+              "id": "s0-l0-w2",
+              "k": 768,
+              "layer": 0,
+              "m": 288,
+              "op": "w2"
+            },
+            "baseline_gpu_us": 18.796875338011887,
+            "candidate_gpu_us": 10.218749594059773,
+            "time_change_percent": -45.635913361648164
+          }
+        ],
+        "checked_cpu_words_both_modes": 41088,
+        "intermediate_cpu_words_both_modes": 0,
+        "all_bits_equal_cpu": true,
+        "guards_passed": true
+      }
+    },
+    "fusion": {
+      "pilot": {
+        "decision": {
+          "command": [
+            "<workspace>/outputs/vitni-metal-q4-prepare-swiglu-2026-11-12/bin/experiment-probe",
+            "fusion",
+            "3",
+            "<workspace>/outputs/vitni-metal-q4-prepare-swiglu-2026-11-12/fusion/pilot.json"
+          ],
+          "exit": 0,
+          "before": {
+            "utc": "2026-11-13T03:58:00.617400+00:00",
+            "values": [
+              5.95,
+              4.42,
+              4.68
+            ]
+          },
+          "after": {
+            "utc": "2026-11-13T03:58:00.922075+00:00",
+            "values": [
+              5.95,
+              4.42,
+              4.68
+            ]
+          },
+          "lower_load_qualified": true,
+          "gpu_sum_ratio": 1.0019433045791817,
+          "fixture_losses": 1,
+          "fixtures": 6,
+          "early_stop": false,
+          "all_bits_equal_cpu": true,
+          "guards_passed": true
+        },
+        "rows": [
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l0-gate",
+              "k": 2048,
+              "layer": 0,
+              "m": 5632,
+              "op": "gate",
+              "step": 0
+            },
+            "baseline_gpu_us": 232.63281218532939,
+            "candidate_gpu_us": 254.86718732281588,
+            "time_change_percent": 9.55771240033554
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l11-gate",
+              "k": 2048,
+              "layer": 11,
+              "m": 5632,
+              "op": "gate",
+              "step": 0
+            },
+            "baseline_gpu_us": 154.4765618746169,
+            "candidate_gpu_us": 149.0703125455184,
+            "time_change_percent": -3.499721422779045
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l21-gate",
+              "k": 2048,
+              "layer": 21,
+              "m": 5632,
+              "op": "gate",
+              "step": 0
+            },
+            "baseline_gpu_us": 154.0885414215154,
+            "candidate_gpu_us": 150.85156246641418,
+            "time_change_percent": -2.1007265856624158
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s7-l0-gate",
+              "k": 2048,
+              "layer": 0,
+              "m": 5632,
+              "op": "gate",
+              "step": 7
+            },
+            "baseline_gpu_us": 153.91406213893788,
+            "candidate_gpu_us": 149.48437456041574,
+            "time_change_percent": -2.8780265538852934
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s7-l11-gate",
+              "k": 2048,
+              "layer": 11,
+              "m": 5632,
+              "op": "gate",
+              "step": 7
+            },
+            "baseline_gpu_us": 152.6406249467982,
+            "candidate_gpu_us": 149.69270796427736,
+            "time_change_percent": -1.93127942416923
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s7-l21-gate",
+              "k": 2048,
+              "layer": 21,
+              "m": 5632,
+              "op": "gate",
+              "step": 7
+            },
+            "baseline_gpu_us": 153.2812502773595,
+            "candidate_gpu_us": 149.0130216552643,
+            "time_change_percent": -2.784573204075458
+          }
+        ],
+        "checked_cpu_words_both_modes": 135168,
+        "intermediate_cpu_words_both_modes": 135168,
+        "all_bits_equal_cpu": true,
+        "guards_passed": true
+      },
+      "confirmation": {
+        "decision": {
+          "command": [
+            "<workspace>/outputs/vitni-metal-q4-prepare-swiglu-2026-11-12/bin/experiment-probe",
+            "fusion",
+            "9",
+            "<workspace>/outputs/vitni-metal-q4-prepare-swiglu-2026-11-12/fusion/confirmation.json"
+          ],
+          "exit": 0,
+          "before": {
+            "utc": "2026-11-13T03:58:27.487480+00:00",
+            "values": [
+              5.91,
+              4.53,
+              4.71
+            ]
+          },
+          "after": {
+            "utc": "2026-11-13T03:58:27.962003+00:00",
+            "values": [
+              5.91,
+              4.53,
+              4.71
+            ]
+          },
+          "lower_load_qualified": true,
+          "gpu_sum_ratio": 0.9741730569476198,
+          "fixture_losses": 0,
+          "fixtures": 6,
+          "early_stop": false,
+          "all_bits_equal_cpu": true,
+          "guards_passed": true
+        },
+        "rows": [
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l0-gate",
+              "k": 2048,
+              "layer": 0,
+              "m": 5632,
+              "op": "gate",
+              "step": 0
+            },
+            "baseline_gpu_us": 171.34895824710838,
+            "candidate_gpu_us": 168.13281308714068,
+            "time_change_percent": -1.876956354371051
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l11-gate",
+              "k": 2048,
+              "layer": 11,
+              "m": 5632,
+              "op": "gate",
+              "step": 0
+            },
+            "baseline_gpu_us": 154.23437525896588,
+            "candidate_gpu_us": 148.53385346214054,
+            "time_change_percent": -3.696012505159063
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s0-l21-gate",
+              "k": 2048,
+              "layer": 21,
+              "m": 5632,
+              "op": "gate",
+              "step": 0
+            },
+            "baseline_gpu_us": 152.53906258294592,
+            "candidate_gpu_us": 149.04947965987958,
+            "time_change_percent": -2.287665116054327
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s7-l0-gate",
+              "k": 2048,
+              "layer": 0,
+              "m": 5632,
+              "op": "gate",
+              "step": 7
+            },
+            "baseline_gpu_us": 151.89322948572226,
+            "candidate_gpu_us": 148.79687478241976,
+            "time_change_percent": -2.038507386923094
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s7-l11-gate",
+              "k": 2048,
+              "layer": 11,
+              "m": 5632,
+              "op": "gate",
+              "step": 7
+            },
+            "baseline_gpu_us": 153.2057294753031,
+            "candidate_gpu_us": 148.68749985907925,
+            "time_change_percent": -2.9491257485590117
+          },
+          {
+            "model": "tiny",
+            "fixture": {
+              "id": "s7-l21-gate",
+              "k": 2048,
+              "layer": 21,
+              "m": 5632,
+              "op": "gate",
+              "step": 7
+            },
+            "baseline_gpu_us": 152.39322965499014,
+            "candidate_gpu_us": 148.2499992562225,
+            "time_change_percent": -2.7187758984750676
+          }
+        ],
+        "checked_cpu_words_both_modes": 135168,
+        "intermediate_cpu_words_both_modes": 135168,
+        "all_bits_equal_cpu": true,
+        "guards_passed": true
+      }
+    }
+  },
+  "numerical_only": {
+    "timing_claim_allowed": false,
+    "reason": "Separate correctness work while lower-load timing preflights could not qualify",
+    "candidate_cpu_words": 5504000,
+    "baseline_cpu_words": 5504000,
+    "all_raw_words_equal_cpu": true,
+    "actual_fused_calls_per_step": {
+      "tiny": 22,
+      "stories": 0
+    },
+    "stories_is_fallback_check": true,
+    "before_after_loads": [
+      {
+        "model": "stories",
+        "mode": "candidate",
+        "before": [
+          14.06,
+          10.96,
+          8.28
+        ],
+        "after": [
+          14.06,
+          10.96,
+          8.28
+        ]
+      },
+      {
+        "model": "stories",
+        "mode": "baseline",
+        "before": [
+          14.58,
+          11.01,
+          8.29
+        ],
+        "after": [
+          14.06,
+          10.96,
+          8.28
+        ]
+      },
+      {
+        "model": "tiny",
+        "mode": "candidate",
+        "before": [
+          14.58,
+          11.01,
+          8.29
+        ],
+        "after": [
+          14.58,
+          11.01,
+          8.29
+        ]
+      },
+      {
+        "model": "tiny",
+        "mode": "baseline",
+        "before": [
+          14.81,
+          10.99,
+          8.26
+        ],
+        "after": [
+          14.58,
+          11.01,
+          8.29
+        ]
+      }
+    ]
+  },
+  "full_timing_preflights": [
+    {
+      "log": "complete.log",
+      "failed_lower_load_gate": true,
+      "load_samples": 19
+    },
+    {
+      "log": "complete-load-retry.log",
+      "failed_lower_load_gate": true,
+      "load_samples": 19
+    },
+    {
+      "log": "complete-load-retry-2.log",
+      "failed_lower_load_gate": true,
+      "load_samples": 19
+    },
+    {
+      "log": "complete-load-retry-3.log",
+      "failed_lower_load_gate": true,
+      "load_samples": 19
+    }
+  ],
+  "status": {
+    "prepare": "stopped for clear kernel regression",
+    "fusion": "unadopted; lower-load complete-model speed pending",
+    "active_engine_restored": true,
+    "main_and_defaults_unchanged": true
+  },
+  "known_baseline_limitation": {
+    "synthetic_gate_values": [
+      -28236.8,
+      -3982087.5
+    ],
+    "cpu_inner_bits": "80000000",
+    "baseline_and_fused_metal_inner_bits": "7f800000",
+    "cause": "existing div_sw behavior when the SiLU exponential overflows",
+    "scope": "Baseline issue reproduced before optimization; candidate preserves it. Not a proof of general IEEE-754 equivalence."
+  },
+  "final_tests": {
+    "passed": 4,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 0,
+    "log": "restored-conformance.log"
+  }
+}

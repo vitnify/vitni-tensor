@@ -1,0 +1,139 @@
+diff --git a/metal/src/lib.rs b/metal/src/lib.rs
+index f14633c..066e5e3 100644
+--- a/metal/src/lib.rs
++++ b/metal/src/lib.rs
+@@ -114,6 +114,8 @@ pub struct MetalForward {
+     device: Device,
+     queue: CommandQueue,
+     concurrent_dispatch: bool,
++    pl_gate_up_swiglu: Option<ComputePipelineState>,
++    gate_up_calls: std::cell::Cell<usize>,
+     pl_q4k_linear: ComputePipelineState,
+     pl_q4k_linear_acc: ComputePipelineState,
+     pl_q4k_cooperative: ComputePipelineState,
+@@ -283,8 +285,16 @@ impl MetalForward {
+                     && (1..=8192).contains(&head_size) && cfg.n_heads > 0 && cfg.kv_mul() > 0;
+                 (Some(pl), supported)
+             } else { (None, false) };
++        let pl_gate_up_swiglu = if std::env::var("VITNI_METAL_GATE_UP_SWIGLU").as_deref() == Ok("1") {
++            if q4k_variant != "metadata" { return Err(MetalError::Compile("gate/up fusion requires metadata Q4".into())); }
++            let source = format!("{FWD}\n#define VITNI_Q4K_NO_CONTRACT 1\n{Q4K}\n{}", include_str!("../../kernels/q4_gate_up_swiglu.metal"));
++            let pl = pipeline(&device, &source, "q4_gate_up_swiglu")?;
++            if pl.thread_execution_width() == 32 && pl.max_total_threads_per_threadgroup() >= 64 { Some(pl) } else { None }
++        } else { None };
+         Ok(MetalForward {
+             concurrent_dispatch,
++            pl_gate_up_swiglu,
++            gate_up_calls: std::cell::Cell::new(0),
+             pl_attn_cooperative,
+             attention_cooperative,
+             pl_q6k_cooperative,
+@@ -394,6 +404,27 @@ impl MetalForward {
+     pub fn q4k_variant(&self) -> &'static str { self.q4k_variant }
+     pub fn q6k_cooperative_enabled(&self) -> bool { self.q6k_cooperative }
+     pub fn concurrent_dispatch_enabled(&self) -> bool { self.concurrent_dispatch }
++    pub fn gate_up_swiglu_enabled(&self) -> bool { self.pl_gate_up_swiglu.is_some() }
++    pub fn gate_up_swiglu_calls(&self) -> usize { self.gate_up_calls.get() }
++    fn gate_up_eligible(&self, l: usize) -> bool {
++        let a=&self.l_w1[l]; let b=&self.l_w3[l];
++        self.pl_gate_up_swiglu.is_some() && self.regime==2
++            && a.kind==0 && b.kind==0 && a.q4_packed && b.q4_packed
++            && a.k==self.dim && b.k==a.k && a.n==self.hidden && b.n==a.n
++            && a.k>0 && a.k%256==0 && a.k<=64*8192 && a.n>0
++    }
++    pub fn gate_up_swiglu_layers(&self) -> usize {
++        (0..self.n_layers).filter(|&l|self.gate_up_eligible(l)).count()
++    }
++    fn gate_up_swiglu(&self, e: &Encoding<'_>, l: usize) -> bool {
++        if !self.gate_up_eligible(l) { return false; }
++        let dims=[self.dim as u32,self.hidden as u32,(self.dim/256) as u32];
++        self.disp(e, self.pl_gate_up_swiglu.as_ref().unwrap(),
++            &[(0,&self.b_xb,0),(1,&self.l_w1[l].buf,0),(2,&self.l_w3[l].buf,0),(3,&self.b_inner,0)],
++            &[(4,bytes(&dims))],self.hidden*16);
++        self.gate_up_calls.set(self.gate_up_calls.get()+1);
++        true
++    }
+     pub fn attention_cooperative_enabled(&self) -> bool { self.attention_cooperative }
+     // The real-matrix pilot lost on the large classifier. Its current kernel
+     // remains selected; only hidden projections can use the cooperative path.
+@@ -644,6 +675,7 @@ impl MetalForward {
+
+     /// Logits for `token` at sequence position `pos`, advancing the (GPU) KV cache.
+     pub fn step(&mut self, token: u32, pos: usize) -> Vec<f32> {
++        self.gate_up_calls.set(0);
+         #[cfg(feature = "profiling")]
+         let clocks = self.profiler.as_ref().map(|p| {
+             p.begin();
+@@ -708,12 +740,14 @@ impl MetalForward {
+             self.barr(&e, &[&self.b_x]);
+             self.rms(&e, &self.b_x, &self.l_rms_ffn[layer], &self.b_xb);
+             self.barr(&e, &[&self.b_xb]);
+-            // gate/up are independent (both read b_xb)
+-            self.lin(&e, &self.b_xb, 0, &self.l_w1[layer], &self.b_gate, 0);
+-            self.lin(&e, &self.b_xb, 0, &self.l_w3[layer], &self.b_up, 0);
+-            self.barr(&e, &[&self.b_gate, &self.b_up]);
+-            self.disp(&e, &self.pl_silu_mul, &[(0, &self.b_gate, 0), (1, &self.b_up, 0), (2, &self.b_inner, 0)],
+-                &[(3, bytes(&[self.hidden as u32]))], self.hidden);
++            if !self.gate_up_swiglu(&e, layer) {
++                // Unsupported types/shapes/regimes retain the concurrent chain.
++                self.lin(&e, &self.b_xb, 0, &self.l_w1[layer], &self.b_gate, 0);
++                self.lin(&e, &self.b_xb, 0, &self.l_w3[layer], &self.b_up, 0);
++                self.barr(&e, &[&self.b_gate, &self.b_up]);
++                self.disp(&e, &self.pl_silu_mul, &[(0, &self.b_gate, 0), (1, &self.b_up, 0), (2, &self.b_inner, 0)],
++                    &[(3, bytes(&[self.hidden as u32]))], self.hidden);
++            }
+             self.barr(&e, &[&self.b_inner]);
+             self.lin_acc(&e, &self.b_inner, 0, &self.l_w2[layer], &self.b_x, 0); // w2 (down) + residual
+             self.barr(&e, &[&self.b_x]);
+diff --git a/kernels/q4_gate_up_swiglu.metal b/kernels/q4_gate_up_swiglu.metal
+new file mode 100644
+index 0000000..da561f9
+--- /dev/null
++++ b/kernels/q4_gate_up_swiglu.metal
+@@ -0,0 +1,46 @@
++// Research only. Append after forward_ops.metal and contraction-off q4k.metal.
++// Two independent eight-thread teams produce a paired gate/up coordinate.
++static inline void q4_gate_up_body(
++    device const float* x, device const uchar* wg, device const uchar* wu,
++    device float* out, device float* gate_debug, device float* up_debug,
++    constant uint* dims, uint gid, uint tid, threadgroup float* partials,
++    threadgroup float* dots, bool debug)
++{
++    uint row = gid / 16u;
++    uint team = (tid / 8u) % 2u;
++    uint lane = tid % 8u;
++    device const uchar* w = team == 0u ? wg : wu;
++    float dot = q4k_metadata_dot(x, w, dims[0], dims[1], dims[2], row * 8u + lane, tid, partials);
++    if (lane == 0u) dots[tid / 8u] = dot;
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++    if (tid % 16u == 0u && row < dims[1]) {
++        float g = dots[tid / 8u];
++        float u = dots[tid / 8u + 1u];
++        if (debug) { gate_debug[row] = g; up_debug[row] = u; }
++        out[row] = div_sw(g, 1.0f + vt_expf(-g)) * u;
++    }
++}
++
++kernel void q4_gate_up_swiglu(
++    device const float* x [[buffer(0)]], device const uchar* wg [[buffer(1)]],
++    device const uchar* wu [[buffer(2)]], device float* out [[buffer(3)]],
++    constant uint* dims [[buffer(4)]],
++    uint gid [[thread_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
++{
++    threadgroup float partials[64];
++    threadgroup float dots[8];
++    // Debug stores are compiled out of this measured kernel.
++    q4_gate_up_body(x, wg, wu, out, out, out, dims, gid, tid, partials, dots, false);
++}
++
++kernel void q4_gate_up_swiglu_debug(
++    device const float* x [[buffer(0)]], device const uchar* wg [[buffer(1)]],
++    device const uchar* wu [[buffer(2)]], device float* out [[buffer(3)]],
++    constant uint* dims [[buffer(4)]], device float* gate_debug [[buffer(5)]],
++    device float* up_debug [[buffer(6)]],
++    uint gid [[thread_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
++{
++    threadgroup float partials[64];
++    threadgroup float dots[8];
++    q4_gate_up_body(x, wg, wu, out, gate_debug, up_debug, dims, gid, tid, partials, dots, true);
++}

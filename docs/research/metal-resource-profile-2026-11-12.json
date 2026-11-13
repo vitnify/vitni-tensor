@@ -1,0 +1,1540 @@
+{
+  "decision": "Do not integrate this Q4 lookup implementation; within-block Q6 is the next unrun candidate.",
+  "active_engine_unchanged": true,
+  "direct_stall_percent_collected": false,
+  "limiter_is_not_stall_percent": true,
+  "counter_scope": "Whole-device timeline with other GPU activity; eight of thirty cores sampled.",
+  "default_profile_shader_costs_are_not_end_to_end_time_shares": true,
+  "profiles": {
+    "default": {
+      "timeline": {
+        "Commands": "309",
+        "Consistent state": "yes",
+        "Cores": "8 sampled / 30 total",
+        "Encoders": "1",
+        "Frame begin": "0 ns",
+        "Frame duration": "17.2597 ms",
+        "Frame end": "17259666 ns",
+        "GPU time": "17.2597 ms",
+        "Overlap": "yes",
+        "Profiled state": "default"
+      },
+      "counters": {
+        "Active Cores": {
+          "Description": "The percentage of available GPU cores that are currently active",
+          "Name": "Active Cores",
+          "Scope": "timeline",
+          "Value": "76 % GPU Cores"
+        },
+        "RT Unit Active": {
+          "Description": "Percentage of GPU Cores where raytracing unit is active.",
+          "Name": "RT Unit Active",
+          "Scope": "timeline",
+          "Value": "0 % GPU Cores"
+        },
+        "Address Generation Limiter": {
+          "Description": "Address Generation Limiter",
+          "Name": "Address Generation Limiter",
+          "Scope": "timeline",
+          "Value": "8.36% Percentage of Peak Performance"
+        },
+        "Address Generation Utilization": {
+          "Description": "Address Generation Utilization",
+          "Name": "Address Generation Utilization",
+          "Scope": "timeline",
+          "Value": "6.78% Percentage of Peak Performance"
+        },
+        "ALU Utilization": {
+          "Description": "Measures the time during which ALU work is executed as a percentage of peak ALU performance",
+          "Name": "ALU Utilization",
+          "Scope": "timeline",
+          "Value": "13.50% Percentage of Peak ALU Performance"
+        },
+        "GPU Bandwidth": {
+          "Description": "Measures how much memory, in gigabytes per second, are read or written by the GPU to a memory external to the GPU (potentially device memory).",
+          "Name": "GPU Bandwidth",
+          "Scope": "timeline",
+          "Value": "48.79 GiB / Second"
+        },
+        "GPU Read Bandwidth": {
+          "Description": "Measures how much memory, in gigabytes per second, are read by the GPU from a memory external to the GPU (potentially device memory)",
+          "Name": "GPU Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "46.20 GiB / Second"
+        },
+        "GPU Write Bandwidth": {
+          "Description": "Measures how much memory, in gigabytes per second, are written by the GPU to a memory external to the GPU (potentially device memory).",
+          "Name": "GPU Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "2.60 GiB / Second"
+        },
+        "Control Flow Limiter": {
+          "Description": "Measures the time during which Control Flow work is attempted to execute as a percentage of peak performance",
+          "Name": "Control Flow Limiter",
+          "Scope": "timeline",
+          "Value": "11.16% Percentage of Peak Performance"
+        },
+        "Control Flow Utilization": {
+          "Description": "Measures the time during which Control Flow work is executed as a percentage of peak performance",
+          "Name": "Control Flow Utilization",
+          "Scope": "timeline",
+          "Value": "8.78% Percentage of Peak Performance"
+        },
+        "F16 Limiter": {
+          "Description": "Measures the time during which F16 work is attempted to execute as a percentage of peak performance. A value of 100% indicates F16 execution pipeline has reached full capacity and cannot process more F16 instructions in parallel",
+          "Name": "F16 Limiter",
+          "Scope": "timeline",
+          "Value": "0.89% Percentage of Peak Performance"
+        },
+        "F16 Utilization": {
+          "Description": "Measures the time during which F16 work is executed as a percentage of peak F16 performance",
+          "Name": "F16 Utilization",
+          "Scope": "timeline",
+          "Value": "0.75% Percentage of Peak F16 Performance"
+        },
+        "F32 Limiter": {
+          "Description": "Measures the time during which F32 work is attempted to execute as a percentage of peak performance. A value of 100% indicates F32 execution pipeline has reached full capacity and cannot process more F32 instructions in parallel",
+          "Name": "F32 Limiter",
+          "Scope": "timeline",
+          "Value": "7.74% Percentage of Peak Performance"
+        },
+        "F32 Utilization": {
+          "Description": "Measures the time during which F32 work is executed as a percentage of peak F32 performance",
+          "Name": "F32 Utilization",
+          "Scope": "timeline",
+          "Value": "6.07% Percentage of Peak F32 Performance"
+        },
+        "GPU Peak Bandwidth": {
+          "Description": "Measures how much memory is read and written by the GPU from and to a memory external to the GPU (potentially device memory) as a percentage of peak memory read write performance",
+          "Name": "GPU Peak Bandwidth",
+          "Scope": "timeline",
+          "Value": "6.73% Percentage of Peak Memory Bandwidth"
+        },
+        "GPU Peak Read Bandwidth": {
+          "Description": "Measures how much memory is read by the GPU from a memory external to the GPU (potentially device memory) as a percentage of peak memory read performance",
+          "Name": "GPU Peak Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "6.37% Percentage of Peak Memory Bandwidth"
+        },
+        "GPU Peak Write Bandwidth": {
+          "Description": "Measures how much memory is wirtten by the GPU to a memory external to the GPU (potentially device memory) as a percentage of peak memory write performance",
+          "Name": "GPU Peak Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.36% Percentage of Peak Memory Bandwidth"
+        },
+        "Instruction Throughput Limiter": {
+          "Description": "Measures the time during which shader instructions are attempted to be processed as a percentage of peak shader execution pipeline performance. If the instruction throughput limiter is low, you can push more ALU and non-ALU instructions from the sub-blocks that are not fully limited. As an example if the instruction throughput limiter is less than 100%, but 100% F16 limited but less than 100% limited by F32, Integer and Complex or Integer and Conditional, then there is an opportunity to push ALU instructions from these ALU sub-blocks to execute in parallel",
+          "Name": "Instruction Throughput Limiter",
+          "Scope": "timeline",
+          "Value": "32.47% Percentage of Peak Performance"
+        },
+        "Instruction Throughput Utilization": {
+          "Description": "Measures the time during which shader instructions are processed as a percentage of peak shader execution pipeline performance",
+          "Name": "Instruction Throughput Utilization",
+          "Scope": "timeline",
+          "Value": "9.79% Percentage of Peak Performance"
+        },
+        "Integer and Complex Limiter": {
+          "Description": "Measures the time during which Integer and Complex work is attemped to execute as a percentage of peak Integer and Complex performance. A value of 100% indicates Integer and Complex execution pipeline has reached full capacity and cannot process more Integer and Complex instructions in parallel",
+          "Name": "Integer and Complex Limiter",
+          "Scope": "timeline",
+          "Value": "10.53% Percentage of Peak Integer and Complex Performance"
+        },
+        "Integer and Complex Utilization": {
+          "Description": "Measures the time during which Integer and Complex work is executed as a percentage of peak Integer and Complex performance",
+          "Name": "Integer and Complex Utilization",
+          "Scope": "timeline",
+          "Value": "8.29% Percentage of Peak Integer and Complex Performance"
+        },
+        "Integer and Conditional Limiter": {
+          "Description": "Measures the time during which Integer and Conditional work is executed as a percentage of peak Integer and Conditional performance. A value of 100% indicates Integer and Conditional execution pipeline has reached full capacity and cannot process more Integer and Conditional instructions in parallel",
+          "Name": "Integer and Conditional Limiter",
+          "Scope": "timeline",
+          "Value": "19.06% Percentage of Peak Integer and Conditional Performance"
+        },
+        "Integer and Conditional Utilization": {
+          "Description": "Measures the time during which Integer and Conditional work is executed as a percentage of peak Integer and Conditional performance",
+          "Name": "Integer and Conditional Utilization",
+          "Scope": "timeline",
+          "Value": "16.03% Percentage of Peak Integer and Conditional Performance"
+        },
+        "L1 Cache Limiter": {
+          "Description": "Measures the time during which shader core L1 cache is attempting to service read and write requests as a percentage of cache\u2019s peak performance",
+          "Name": "L1 Cache Limiter",
+          "Scope": "timeline",
+          "Value": "5.45% Percentage of Peak L1 Performance"
+        },
+        "L1 Cache Utilization": {
+          "Description": "Measures the time during which GPU\u2019s L1 cache serviced read and write requests as a percentage of cache\u2019s peak performance",
+          "Name": "L1 Cache Utilization",
+          "Scope": "timeline",
+          "Value": "5.45% Percentage of Peak L1 Performance"
+        },
+        "Buffer L1 Read Accesses": {
+          "Description": "Measures the buffer reads serviced by L1 as a percentage of total L1 read accesses",
+          "Name": "Buffer L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "89.93% Percentage of Total L1 Read Accesses"
+        },
+        "ImageBlock L1 Read Accesses": {
+          "Description": "Measures imageblock read accesses as a percentage of total L1 read accesses",
+          "Name": "ImageBlock L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "1.03% Percentage of Total L1 Read Accesses"
+        },
+        "Other L1 Read Accesses": {
+          "Description": "Measures L1 read accesses for other shader core sub-blocks  as a percentage of total L1 cache\u2019s read accesses",
+          "Name": "Other L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "1.42% Percentage of Total L1 Read Accesses"
+        },
+        "Register L1 Read Accesses": {
+          "Description": "Measures L1 rgeneral purpose register read accesses as a percentage of total L1 cache\u2019s read accesses",
+          "Name": "Register L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "0.33% Percentage of Total L1 Read Accesses"
+        },
+        "RT Scratch L1 Read Accesses": {
+          "Description": "Measures L1 ray tracing scratch read accesses as a percentage of total L1 cache\u2019s read accesses",
+          "Name": "RT Scratch L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Total L1 Read Accesses"
+        },
+        "Stack L1 Read Accesses": {
+          "Description": "Measures stack L1 read accesses  as a percentage of total L1 cache\u2019s read accesses",
+          "Name": "Stack L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "0.67% Percentage of Total L1 Read Accesses"
+        },
+        "ThreadGroup L1 Read Accesses": {
+          "Description": "Measures threadgroup L1 reads accesses as a percentage of peak L1 total read accesses",
+          "Name": "ThreadGroup L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "1.07% Percentage of Total L1 Read Accesses"
+        },
+        "Buffer L1 Write Accesses": {
+          "Description": "Measures the buffer writes serviced by L1 as a percentage of total L1 write accesses",
+          "Name": "Buffer L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "1.19% Percentage of Total L1 Write Accesses"
+        },
+        "ImageBlock L1 Write Accesses": {
+          "Description": "Measures imageblock write accesses as a percentage of total L1 write accesses",
+          "Name": "ImageBlock L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "1.14% Percentage of Total L1 Write Accesses"
+        },
+        "Other L1 Write Accesses": {
+          "Description": "Measures L1 write accesses for other shader core sub-blocks  as a percentage of total L1 cache\u2019s write accesses",
+          "Name": "Other L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "1.45% Percentage of Total L1 Write Accesses"
+        },
+        "Register L1 Write Accesses": {
+          "Description": "Measures L1 general purpose register write accesses as a percentage of total L1 cache\u2019s write accesses",
+          "Name": "Register L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "0.35% Percentage of Total L1 Write Accesses"
+        },
+        "RT Scratch L1 Write Accesses": {
+          "Description": "Measures L1 ray tracing scratch write accesses as a percentage of total L1 cache\u2019s write accesses",
+          "Name": "RT Scratch L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Total L1 Write Accesses"
+        },
+        "Stack L1 Write Accesses": {
+          "Description": "Measures stack L1 write accesses  as a percentage of total L1 cache\u2019s write accesses",
+          "Name": "Stack L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "0.67% Percentage of Total L1 Write Accesses"
+        },
+        "ThreadGroup L1 Write Accesses": {
+          "Description": "Measures threadgroup write accesses as a percentage of peak L1 write accesses",
+          "Name": "ThreadGroup L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "0.76% Percentage of Total L1 Write Accesses"
+        },
+        "Buffer L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by buffers in GiB/s",
+          "Name": "Buffer L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "129.44 GiB/s"
+        },
+        "Imageblock L1 Read Bandwidth": {
+          "Description": "Imageblock L1 read bandwidth in GiB/s",
+          "Name": "Imageblock L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "17.80 GiB/s"
+        },
+        "L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth in GiB/s",
+          "Name": "L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "165.32 GiB/s"
+        },
+        "Register L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by general purpose registers in GiB/s",
+          "Name": "Register L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.69 GiB/s"
+        },
+        "RT Scratch L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by ray tracing scratch in GiB/s",
+          "Name": "RT Scratch L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.00 GiB/s"
+        },
+        "Stack L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by stack in GiB/s",
+          "Name": "Stack L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.39 GiB/s"
+        },
+        "Threadgroup Memory L1 Read Bandwidth": {
+          "Description": "Threadgroup Memory L1 read bandwidth in GiB/s",
+          "Name": "Threadgroup Memory L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "1.09 GiB/s"
+        },
+        "Unclassified L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by unclassified shader core sub-blocks in GiB/s",
+          "Name": "Unclassified L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "15.91 GiB/s"
+        },
+        "L1 Buffer Residency": {
+          "Description": "L1 Buffer Residency",
+          "Name": "L1 Buffer Residency",
+          "Scope": "timeline",
+          "Value": "39.23% % L1 Capacity"
+        },
+        "L1 Imageblock Residency": {
+          "Description": "L1 Imageblock Residency",
+          "Name": "L1 Imageblock Residency",
+          "Scope": "timeline",
+          "Value": "0.35% % L1 Capacity"
+        },
+        "L1 Other Residency": {
+          "Description": "L1 Other Residency",
+          "Name": "L1 Other Residency",
+          "Scope": "timeline",
+          "Value": "0.10% % L1 Capacity"
+        },
+        "L1 Register Residency": {
+          "Description": "L1 Register Residency",
+          "Name": "L1 Register Residency",
+          "Scope": "timeline",
+          "Value": "0.22% % L1 Capacity"
+        },
+        "L1 RT Scratch Residency": {
+          "Description": "L1 RT Scratch Residency",
+          "Name": "L1 RT Scratch Residency",
+          "Scope": "timeline",
+          "Value": "0.00% % L1 Capacity"
+        },
+        "L1 Threadgroup Residency": {
+          "Description": "L1 Threadgroup Residency",
+          "Name": "L1 Threadgroup Residency",
+          "Scope": "timeline",
+          "Value": "0.02% % L1 Capacity"
+        },
+        "L1 Total Residency": {
+          "Description": "L1 Total Residency",
+          "Name": "L1 Total Residency",
+          "Scope": "timeline",
+          "Value": "39.92% % L1 Capacity"
+        },
+        "Buffer L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth that is used by buffers in GiB/s",
+          "Name": "Buffer L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.18 GiB/s"
+        },
+        "Imageblock L1 Write Bandwidth": {
+          "Description": "Imageblock L1 write bandwidth in GiB/s",
+          "Name": "Imageblock L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "19.92 GiB/s"
+        },
+        "L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth in GiB/s",
+          "Name": "L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "37.84 GiB/s"
+        },
+        "Register L1 Write Bandwidth": {
+          "Description": "L1 wrote bandwidth that is used by general purpose registers in GiB/s",
+          "Name": "Register L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.71 GiB/s"
+        },
+        "RT Scratch L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth that is used by ray tracing scratch in GiB/s",
+          "Name": "RT Scratch L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.00 GiB/s"
+        },
+        "Stack L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth that is used by stack in GiB/s",
+          "Name": "Stack L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.65 GiB/s"
+        },
+        "Threadgroup Memory L1 Write Bandwidth": {
+          "Description": "Threadgroup Memory L1 write bandwidth in GiB/s",
+          "Name": "Threadgroup Memory L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.71 GiB/s"
+        },
+        "Unclassified L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth that is used by unclassified shader core sub-blocks in GiB/s",
+          "Name": "Unclassified L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "15.67 GiB/s"
+        },
+        "Last Level Cache Bandwidth": {
+          "Description": "Measures how much memory, in gigabytes per second, are read or written by the GPU's last level cache",
+          "Name": "Last Level Cache Bandwidth",
+          "Scope": "timeline",
+          "Value": "59.19 GB/s"
+        },
+        "Last Level Cache Limiter": {
+          "Description": "Measures the time during which GPU\u2019s last level cache is attempting to service read and write requests as a percentage of cache\u2019s peak performance",
+          "Name": "Last Level Cache Limiter",
+          "Scope": "timeline",
+          "Value": "3.23% Percentage of Peak Cache Performance"
+        },
+        "Last Level Cache Utilization": {
+          "Description": "Measures the time during which GPU\u2019s last level cache serviced read and write requests as a percentage of cache\u2019s peak performance",
+          "Name": "Last Level Cache Utilization",
+          "Scope": "timeline",
+          "Value": "3.03% Percentage of Peak Cache Performance"
+        },
+        "MMU Limiter": {
+          "Description": "Measures the time during which GPU is attempting to execute read and write requests through MMU due to last level cache misses as a percentage of peak MMU performance",
+          "Name": "MMU Limiter",
+          "Scope": "timeline",
+          "Value": "2.55% Percentage of Peak MMU Performance"
+        },
+        "MMU Utilization": {
+          "Description": "Measures the time during which GPU serviced read and write requests through MMU due to last level cache misses as a percentage of peak MMU performance",
+          "Name": "MMU Utilization",
+          "Scope": "timeline",
+          "Value": "2.51% Percentage of Peak MMU Performance"
+        },
+        "FS Occupancy": {
+          "Description": "Percentage of shader core resources that are occupied by the fragment shader",
+          "Name": "FS Occupancy",
+          "Scope": "timeline",
+          "Value": "2.92% Percentage of Shader Core Resources"
+        },
+        "Kernel Occupancy": {
+          "Description": "Percentage of shader core resources that are occupied by the compute kernel",
+          "Name": "Kernel Occupancy",
+          "Scope": "timeline",
+          "Value": "15.85% Percentage of Shader Core Resources"
+        },
+        "Total Occupancy": {
+          "Description": "Sum of vertex, fragment and compute occupancy",
+          "Name": "Total Occupancy",
+          "Scope": "timeline",
+          "Value": "18.77% % Shader Core Resources"
+        },
+        "VS Occupancy": {
+          "Description": "Percentage of shader core resources that are occupied by the vertex shader",
+          "Name": "VS Occupancy",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Shader Core Resources"
+        },
+        "L1 Eviction Rate": {
+          "Description": "A measure of the number of L1 cache lines evicted by shader core private memory accesses . The more this number approaches 100% the more that the Occupancy Manager will attempt to reduce simdgroup occupancy.",
+          "Name": "L1 Eviction Rate",
+          "Scope": "timeline",
+          "Value": "0.00 Measure of L1 Cache Line Evictions"
+        },
+        "Occupancy Manager Target": {
+          "Description": "The occupancy level which the occupancy throttler is attempting to achieve.",
+          "Name": "Occupancy Manager Target",
+          "Scope": "timeline",
+          "Value": "98.14% % Shader Core Resources"
+        },
+        "Compute Shader Launch Limiter": {
+          "Description": "The rate at which compute shader threads are launched into the shader cores or stalled launching by the shader core, normalized to the peak launch rate",
+          "Name": "Compute Shader Launch Limiter",
+          "Scope": "timeline",
+          "Value": "0.22% % Peak Performance"
+        },
+        "Fragment Shader Launch Limiter": {
+          "Description": "The rate at which fragment shader threads are launched into the shader cores or stalled launching by the shader core, normalized to the peak launch rate",
+          "Name": "Fragment Shader Launch Limiter",
+          "Scope": "timeline",
+          "Value": "3.32% % Peak Performance"
+        },
+        "Vertex Shader Launch Limiter": {
+          "Description": "The rate at which vertex shader threads are launched into the shader cores or stalled launching by the shader core, normalized to the peak launch rate",
+          "Name": "Vertex Shader Launch Limiter",
+          "Scope": "timeline",
+          "Value": "0.04% % Peak Performance"
+        },
+        "Compute SIMD Groups Inflight": {
+          "Description": "The average number of vertex simdgroups running concurrently per shader core.",
+          "Name": "Compute SIMD Groups Inflight",
+          "Scope": "timeline",
+          "Value": "15 SIMD Groups"
+        },
+        "Fragment SIMD Groups Inflight": {
+          "Description": "The average number of fragment simdgroups running concurrently per shader core.",
+          "Name": "Fragment SIMD Groups Inflight",
+          "Scope": "timeline",
+          "Value": "3 SIMD Groups"
+        },
+        "Total SIMD Groups Inflight": {
+          "Description": "The average number of all simdgroups including vertex, fragment and compute running concurrently per shader core.",
+          "Name": "Total SIMD Groups Inflight",
+          "Scope": "timeline",
+          "Value": "18 SIMD Groups"
+        },
+        "Vertex SIMD Groups Inflight": {
+          "Description": "The average number of vertex simdgroups running concurrently per shader core.",
+          "Name": "Vertex SIMD Groups Inflight",
+          "Scope": "timeline",
+          "Value": "0 SIMD Groups"
+        },
+        "Compression Ratio of Texture Memory Read": {
+          "Description": "Ratio of compressed to uncompressed color and depth texture memory read. Indicates the memory bandwidth savings achieved from texture compression. It compares the original (uncompressed) data size to the actual (compressed) size read from memory. A value of 2.0, for instance, signifies a 2:1 compression ratio, meaning the memory transfer was half the original size. Values below 1.0 indicate that compression was counter-productive, leading to wasted bandwidth.",
+          "Name": "Compression Ratio of Texture Memory Read",
+          "Scope": "timeline",
+          "Value": "0 Ratio of compressed to uncompressed memory"
+        },
+        "Texture Filtering Limiter": {
+          "Description": "Measures the time during which texture filterings is attempted to execute as a percentage of peak texture filtering performance",
+          "Name": "Texture Filtering Limiter",
+          "Scope": "timeline",
+          "Value": "1.04% Percentage of Peak Texture Filtering Performance"
+        },
+        "Texture Read Limiter": {
+          "Description": "Measures the time during which texture reads / samples are attempted to execute as a percentage of peak texture read / sampling performance",
+          "Name": "Texture Read Limiter",
+          "Scope": "timeline",
+          "Value": "0.71% Percentage of Peak Texture Read Performance"
+        },
+        "Texture Read Utilization": {
+          "Description": "Measures the time during which texture reads / samples are executed as a percentage of peak texture read / sample performance",
+          "Name": "Texture Read Utilization",
+          "Scope": "timeline",
+          "Value": "0.67% Percentage of Peak Texture Read Performance"
+        },
+        "Texture Read Cache Limiter": {
+          "Description": "Measures the time during which texture cache reads are attempted to execute as a percentage of peak texture read cache performance",
+          "Name": "Texture Read Cache Limiter",
+          "Scope": "timeline",
+          "Value": "1.04% Percentage of Peak Texture Read Cache Performance"
+        },
+        "Texture Read Cache Utilization": {
+          "Description": "Measures the time during which texture cache reads is executed as a percentage of peak texture read cache performance",
+          "Name": "Texture Read Cache Utilization",
+          "Scope": "timeline",
+          "Value": "0.20% Percentage of Peak Texture Read Cache Performance"
+        },
+        "Texture Write Limiter": {
+          "Description": "Measures the time during which texture write are attempted to execute as a percentage of peak texture write performance",
+          "Name": "Texture Write Limiter",
+          "Scope": "timeline",
+          "Value": "0.65% Percentage of Peak Texture Write Performance"
+        },
+        "Texture Write Utilization": {
+          "Description": "Measures the time during which texture writes are executed as a percentage of peak texture writes performance",
+          "Name": "Texture Write Utilization",
+          "Scope": "timeline",
+          "Value": "0.65% Percentage of Peak Texture Write Performance"
+        }
+      }
+    },
+    "high": {
+      "timeline": {
+        "Commands": "309",
+        "Consistent state": "yes",
+        "Cores": "8 sampled / 30 total",
+        "Encoders": "1",
+        "Frame begin": "0 ns",
+        "Frame duration": "11.9058 ms",
+        "Frame end": "11905833 ns",
+        "GPU time": "11.9058 ms",
+        "Overlap": "yes",
+        "Profiled state": "max"
+      },
+      "counters": {
+        "Active Cores": {
+          "Description": "The percentage of available GPU cores that are currently active",
+          "Name": "Active Cores",
+          "Scope": "timeline",
+          "Value": "78 % GPU Cores"
+        },
+        "RT Unit Active": {
+          "Description": "Percentage of GPU Cores where raytracing unit is active.",
+          "Name": "RT Unit Active",
+          "Scope": "timeline",
+          "Value": "0 % GPU Cores"
+        },
+        "Address Generation Limiter": {
+          "Description": "Address Generation Limiter",
+          "Name": "Address Generation Limiter",
+          "Scope": "timeline",
+          "Value": "7.90% Percentage of Peak Performance"
+        },
+        "Address Generation Utilization": {
+          "Description": "Address Generation Utilization",
+          "Name": "Address Generation Utilization",
+          "Scope": "timeline",
+          "Value": "6.11% Percentage of Peak Performance"
+        },
+        "ALU Utilization": {
+          "Description": "Measures the time during which ALU work is executed as a percentage of peak ALU performance",
+          "Name": "ALU Utilization",
+          "Scope": "timeline",
+          "Value": "11.98% Percentage of Peak ALU Performance"
+        },
+        "GPU Bandwidth": {
+          "Description": "Measures how much memory, in gigabytes per second, are read or written by the GPU to a memory external to the GPU (potentially device memory).",
+          "Name": "GPU Bandwidth",
+          "Scope": "timeline",
+          "Value": "66.04 GiB / Second"
+        },
+        "GPU Read Bandwidth": {
+          "Description": "Measures how much memory, in gigabytes per second, are read by the GPU from a memory external to the GPU (potentially device memory)",
+          "Name": "GPU Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "63.27 GiB / Second"
+        },
+        "GPU Write Bandwidth": {
+          "Description": "Measures how much memory, in gigabytes per second, are written by the GPU to a memory external to the GPU (potentially device memory).",
+          "Name": "GPU Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "2.77 GiB / Second"
+        },
+        "Control Flow Limiter": {
+          "Description": "Measures the time during which Control Flow work is attempted to execute as a percentage of peak performance",
+          "Name": "Control Flow Limiter",
+          "Scope": "timeline",
+          "Value": "10.50% Percentage of Peak Performance"
+        },
+        "Control Flow Utilization": {
+          "Description": "Measures the time during which Control Flow work is executed as a percentage of peak performance",
+          "Name": "Control Flow Utilization",
+          "Scope": "timeline",
+          "Value": "8.41% Percentage of Peak Performance"
+        },
+        "F16 Limiter": {
+          "Description": "Measures the time during which F16 work is attempted to execute as a percentage of peak performance. A value of 100% indicates F16 execution pipeline has reached full capacity and cannot process more F16 instructions in parallel",
+          "Name": "F16 Limiter",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Peak Performance"
+        },
+        "F16 Utilization": {
+          "Description": "Measures the time during which F16 work is executed as a percentage of peak F16 performance",
+          "Name": "F16 Utilization",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Peak F16 Performance"
+        },
+        "F32 Limiter": {
+          "Description": "Measures the time during which F32 work is attempted to execute as a percentage of peak performance. A value of 100% indicates F32 execution pipeline has reached full capacity and cannot process more F32 instructions in parallel",
+          "Name": "F32 Limiter",
+          "Scope": "timeline",
+          "Value": "6.88% Percentage of Peak Performance"
+        },
+        "F32 Utilization": {
+          "Description": "Measures the time during which F32 work is executed as a percentage of peak F32 performance",
+          "Name": "F32 Utilization",
+          "Scope": "timeline",
+          "Value": "5.46% Percentage of Peak F32 Performance"
+        },
+        "GPU Peak Bandwidth": {
+          "Description": "Measures how much memory is read and written by the GPU from and to a memory external to the GPU (potentially device memory) as a percentage of peak memory read write performance",
+          "Name": "GPU Peak Bandwidth",
+          "Scope": "timeline",
+          "Value": "5.77% Percentage of Peak Memory Bandwidth"
+        },
+        "GPU Peak Read Bandwidth": {
+          "Description": "Measures how much memory is read by the GPU from a memory external to the GPU (potentially device memory) as a percentage of peak memory read performance",
+          "Name": "GPU Peak Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "5.53% Percentage of Peak Memory Bandwidth"
+        },
+        "GPU Peak Write Bandwidth": {
+          "Description": "Measures how much memory is wirtten by the GPU to a memory external to the GPU (potentially device memory) as a percentage of peak memory write performance",
+          "Name": "GPU Peak Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.24% Percentage of Peak Memory Bandwidth"
+        },
+        "Instruction Throughput Limiter": {
+          "Description": "Measures the time during which shader instructions are attempted to be processed as a percentage of peak shader execution pipeline performance. If the instruction throughput limiter is low, you can push more ALU and non-ALU instructions from the sub-blocks that are not fully limited. As an example if the instruction throughput limiter is less than 100%, but 100% F16 limited but less than 100% limited by F32, Integer and Complex or Integer and Conditional, then there is an opportunity to push ALU instructions from these ALU sub-blocks to execute in parallel",
+          "Name": "Instruction Throughput Limiter",
+          "Scope": "timeline",
+          "Value": "29.46% Percentage of Peak Performance"
+        },
+        "Instruction Throughput Utilization": {
+          "Description": "Measures the time during which shader instructions are processed as a percentage of peak shader execution pipeline performance",
+          "Name": "Instruction Throughput Utilization",
+          "Scope": "timeline",
+          "Value": "8.85% Percentage of Peak Performance"
+        },
+        "Integer and Complex Limiter": {
+          "Description": "Measures the time during which Integer and Complex work is attemped to execute as a percentage of peak Integer and Complex performance. A value of 100% indicates Integer and Complex execution pipeline has reached full capacity and cannot process more Integer and Complex instructions in parallel",
+          "Name": "Integer and Complex Limiter",
+          "Scope": "timeline",
+          "Value": "9.45% Percentage of Peak Integer and Complex Performance"
+        },
+        "Integer and Complex Utilization": {
+          "Description": "Measures the time during which Integer and Complex work is executed as a percentage of peak Integer and Complex performance",
+          "Name": "Integer and Complex Utilization",
+          "Scope": "timeline",
+          "Value": "7.53% Percentage of Peak Integer and Complex Performance"
+        },
+        "Integer and Conditional Limiter": {
+          "Description": "Measures the time during which Integer and Conditional work is executed as a percentage of peak Integer and Conditional performance. A value of 100% indicates Integer and Conditional execution pipeline has reached full capacity and cannot process more Integer and Conditional instructions in parallel",
+          "Name": "Integer and Conditional Limiter",
+          "Scope": "timeline",
+          "Value": "17.46% Percentage of Peak Integer and Conditional Performance"
+        },
+        "Integer and Conditional Utilization": {
+          "Description": "Measures the time during which Integer and Conditional work is executed as a percentage of peak Integer and Conditional performance",
+          "Name": "Integer and Conditional Utilization",
+          "Scope": "timeline",
+          "Value": "14.73% Percentage of Peak Integer and Conditional Performance"
+        },
+        "L1 Cache Limiter": {
+          "Description": "Measures the time during which shader core L1 cache is attempting to service read and write requests as a percentage of cache\u2019s peak performance",
+          "Name": "L1 Cache Limiter",
+          "Scope": "timeline",
+          "Value": "5.02% Percentage of Peak L1 Performance"
+        },
+        "L1 Cache Utilization": {
+          "Description": "Measures the time during which GPU\u2019s L1 cache serviced read and write requests as a percentage of cache\u2019s peak performance",
+          "Name": "L1 Cache Utilization",
+          "Scope": "timeline",
+          "Value": "5.02% Percentage of Peak L1 Performance"
+        },
+        "Buffer L1 Read Accesses": {
+          "Description": "Measures the buffer reads serviced by L1 as a percentage of total L1 read accesses",
+          "Name": "Buffer L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "92.41% Percentage of Total L1 Read Accesses"
+        },
+        "ImageBlock L1 Read Accesses": {
+          "Description": "Measures imageblock read accesses as a percentage of total L1 read accesses",
+          "Name": "ImageBlock L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Total L1 Read Accesses"
+        },
+        "Other L1 Read Accesses": {
+          "Description": "Measures L1 read accesses for other shader core sub-blocks  as a percentage of total L1 cache\u2019s read accesses",
+          "Name": "Other L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "0.26% Percentage of Total L1 Read Accesses"
+        },
+        "Register L1 Read Accesses": {
+          "Description": "Measures L1 rgeneral purpose register read accesses as a percentage of total L1 cache\u2019s read accesses",
+          "Name": "Register L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "0.36% Percentage of Total L1 Read Accesses"
+        },
+        "RT Scratch L1 Read Accesses": {
+          "Description": "Measures L1 ray tracing scratch read accesses as a percentage of total L1 cache\u2019s read accesses",
+          "Name": "RT Scratch L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Total L1 Read Accesses"
+        },
+        "Stack L1 Read Accesses": {
+          "Description": "Measures stack L1 read accesses  as a percentage of total L1 cache\u2019s read accesses",
+          "Name": "Stack L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "1.13% Percentage of Total L1 Read Accesses"
+        },
+        "ThreadGroup L1 Read Accesses": {
+          "Description": "Measures threadgroup L1 reads accesses as a percentage of peak L1 total read accesses",
+          "Name": "ThreadGroup L1 Read Accesses",
+          "Scope": "timeline",
+          "Value": "1.14% Percentage of Total L1 Read Accesses"
+        },
+        "Buffer L1 Write Accesses": {
+          "Description": "Measures the buffer writes serviced by L1 as a percentage of total L1 write accesses",
+          "Name": "Buffer L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "2.09% Percentage of Total L1 Write Accesses"
+        },
+        "ImageBlock L1 Write Accesses": {
+          "Description": "Measures imageblock write accesses as a percentage of total L1 write accesses",
+          "Name": "ImageBlock L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Total L1 Write Accesses"
+        },
+        "Other L1 Write Accesses": {
+          "Description": "Measures L1 write accesses for other shader core sub-blocks  as a percentage of total L1 cache\u2019s write accesses",
+          "Name": "Other L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "0.30% Percentage of Total L1 Write Accesses"
+        },
+        "Register L1 Write Accesses": {
+          "Description": "Measures L1 general purpose register write accesses as a percentage of total L1 cache\u2019s write accesses",
+          "Name": "Register L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "0.35% Percentage of Total L1 Write Accesses"
+        },
+        "RT Scratch L1 Write Accesses": {
+          "Description": "Measures L1 ray tracing scratch write accesses as a percentage of total L1 cache\u2019s write accesses",
+          "Name": "RT Scratch L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Total L1 Write Accesses"
+        },
+        "Stack L1 Write Accesses": {
+          "Description": "Measures stack L1 write accesses  as a percentage of total L1 cache\u2019s write accesses",
+          "Name": "Stack L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "1.10% Percentage of Total L1 Write Accesses"
+        },
+        "ThreadGroup L1 Write Accesses": {
+          "Description": "Measures threadgroup write accesses as a percentage of peak L1 write accesses",
+          "Name": "ThreadGroup L1 Write Accesses",
+          "Scope": "timeline",
+          "Value": "0.85% Percentage of Total L1 Write Accesses"
+        },
+        "Buffer L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by buffers in GiB/s",
+          "Name": "Buffer L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "187.58 GiB/s"
+        },
+        "Imageblock L1 Read Bandwidth": {
+          "Description": "Imageblock L1 read bandwidth in GiB/s",
+          "Name": "Imageblock L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.00 GiB/s"
+        },
+        "L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth in GiB/s",
+          "Name": "L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "190.67 GiB/s"
+        },
+        "Register L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by general purpose registers in GiB/s",
+          "Name": "Register L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "1.17 GiB/s"
+        },
+        "RT Scratch L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by ray tracing scratch in GiB/s",
+          "Name": "RT Scratch L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.00 GiB/s"
+        },
+        "Stack L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by stack in GiB/s",
+          "Name": "Stack L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.57 GiB/s"
+        },
+        "Threadgroup Memory L1 Read Bandwidth": {
+          "Description": "Threadgroup Memory L1 read bandwidth in GiB/s",
+          "Name": "Threadgroup Memory L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "1.27 GiB/s"
+        },
+        "Unclassified L1 Read Bandwidth": {
+          "Description": "L1 read bandwidth that is used by unclassified shader core sub-blocks in GiB/s",
+          "Name": "Unclassified L1 Read Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.09 GiB/s"
+        },
+        "L1 Buffer Residency": {
+          "Description": "L1 Buffer Residency",
+          "Name": "L1 Buffer Residency",
+          "Scope": "timeline",
+          "Value": "39.77% % L1 Capacity"
+        },
+        "L1 Imageblock Residency": {
+          "Description": "L1 Imageblock Residency",
+          "Name": "L1 Imageblock Residency",
+          "Scope": "timeline",
+          "Value": "0.00% % L1 Capacity"
+        },
+        "L1 Other Residency": {
+          "Description": "L1 Other Residency",
+          "Name": "L1 Other Residency",
+          "Scope": "timeline",
+          "Value": "0.03% % L1 Capacity"
+        },
+        "L1 Register Residency": {
+          "Description": "L1 Register Residency",
+          "Name": "L1 Register Residency",
+          "Scope": "timeline",
+          "Value": "0.22% % L1 Capacity"
+        },
+        "L1 RT Scratch Residency": {
+          "Description": "L1 RT Scratch Residency",
+          "Name": "L1 RT Scratch Residency",
+          "Scope": "timeline",
+          "Value": "0.00% % L1 Capacity"
+        },
+        "L1 Threadgroup Residency": {
+          "Description": "L1 Threadgroup Residency",
+          "Name": "L1 Threadgroup Residency",
+          "Scope": "timeline",
+          "Value": "0.02% % L1 Capacity"
+        },
+        "L1 Total Residency": {
+          "Description": "L1 Total Residency",
+          "Name": "L1 Total Residency",
+          "Scope": "timeline",
+          "Value": "40.04% % L1 Capacity"
+        },
+        "Buffer L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth that is used by buffers in GiB/s",
+          "Name": "Buffer L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.26 GiB/s"
+        },
+        "Imageblock L1 Write Bandwidth": {
+          "Description": "Imageblock L1 write bandwidth in GiB/s",
+          "Name": "Imageblock L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.00 GiB/s"
+        },
+        "L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth in GiB/s",
+          "Name": "L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "3.08 GiB/s"
+        },
+        "Register L1 Write Bandwidth": {
+          "Description": "L1 wrote bandwidth that is used by general purpose registers in GiB/s",
+          "Name": "Register L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "1.19 GiB/s"
+        },
+        "RT Scratch L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth that is used by ray tracing scratch in GiB/s",
+          "Name": "RT Scratch L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.00 GiB/s"
+        },
+        "Stack L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth that is used by stack in GiB/s",
+          "Name": "Stack L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.57 GiB/s"
+        },
+        "Threadgroup Memory L1 Write Bandwidth": {
+          "Description": "Threadgroup Memory L1 write bandwidth in GiB/s",
+          "Name": "Threadgroup Memory L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.98 GiB/s"
+        },
+        "Unclassified L1 Write Bandwidth": {
+          "Description": "L1 write bandwidth that is used by unclassified shader core sub-blocks in GiB/s",
+          "Name": "Unclassified L1 Write Bandwidth",
+          "Scope": "timeline",
+          "Value": "0.09 GiB/s"
+        },
+        "Last Level Cache Bandwidth": {
+          "Description": "Measures how much memory, in gigabytes per second, are read or written by the GPU's last level cache",
+          "Name": "Last Level Cache Bandwidth",
+          "Scope": "timeline",
+          "Value": "78.70 GB/s"
+        },
+        "Last Level Cache Limiter": {
+          "Description": "Measures the time during which GPU\u2019s last level cache is attempting to service read and write requests as a percentage of cache\u2019s peak performance",
+          "Name": "Last Level Cache Limiter",
+          "Scope": "timeline",
+          "Value": "3.57% Percentage of Peak Cache Performance"
+        },
+        "Last Level Cache Utilization": {
+          "Description": "Measures the time during which GPU\u2019s last level cache serviced read and write requests as a percentage of cache\u2019s peak performance",
+          "Name": "Last Level Cache Utilization",
+          "Scope": "timeline",
+          "Value": "3.34% Percentage of Peak Cache Performance"
+        },
+        "MMU Limiter": {
+          "Description": "Measures the time during which GPU is attempting to execute read and write requests through MMU due to last level cache misses as a percentage of peak MMU performance",
+          "Name": "MMU Limiter",
+          "Scope": "timeline",
+          "Value": "2.85% Percentage of Peak MMU Performance"
+        },
+        "MMU Utilization": {
+          "Description": "Measures the time during which GPU serviced read and write requests through MMU due to last level cache misses as a percentage of peak MMU performance",
+          "Name": "MMU Utilization",
+          "Scope": "timeline",
+          "Value": "2.80% Percentage of Peak MMU Performance"
+        },
+        "FS Occupancy": {
+          "Description": "Percentage of shader core resources that are occupied by the fragment shader",
+          "Name": "FS Occupancy",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Shader Core Resources"
+        },
+        "Kernel Occupancy": {
+          "Description": "Percentage of shader core resources that are occupied by the compute kernel",
+          "Name": "Kernel Occupancy",
+          "Scope": "timeline",
+          "Value": "16.04% Percentage of Shader Core Resources"
+        },
+        "Total Occupancy": {
+          "Description": "Sum of vertex, fragment and compute occupancy",
+          "Name": "Total Occupancy",
+          "Scope": "timeline",
+          "Value": "16.04% % Shader Core Resources"
+        },
+        "VS Occupancy": {
+          "Description": "Percentage of shader core resources that are occupied by the vertex shader",
+          "Name": "VS Occupancy",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Shader Core Resources"
+        },
+        "L1 Eviction Rate": {
+          "Description": "A measure of the number of L1 cache lines evicted by shader core private memory accesses . The more this number approaches 100% the more that the Occupancy Manager will attempt to reduce simdgroup occupancy.",
+          "Name": "L1 Eviction Rate",
+          "Scope": "timeline",
+          "Value": "0.00 Measure of L1 Cache Line Evictions"
+        },
+        "Occupancy Manager Target": {
+          "Description": "The occupancy level which the occupancy throttler is attempting to achieve.",
+          "Name": "Occupancy Manager Target",
+          "Scope": "timeline",
+          "Value": "96.87% % Shader Core Resources"
+        },
+        "Compute Shader Launch Limiter": {
+          "Description": "The rate at which compute shader threads are launched into the shader cores or stalled launching by the shader core, normalized to the peak launch rate",
+          "Name": "Compute Shader Launch Limiter",
+          "Scope": "timeline",
+          "Value": "0.09% % Peak Performance"
+        },
+        "Fragment Shader Launch Limiter": {
+          "Description": "The rate at which fragment shader threads are launched into the shader cores or stalled launching by the shader core, normalized to the peak launch rate",
+          "Name": "Fragment Shader Launch Limiter",
+          "Scope": "timeline",
+          "Value": "0.00% % Peak Performance"
+        },
+        "Vertex Shader Launch Limiter": {
+          "Description": "The rate at which vertex shader threads are launched into the shader cores or stalled launching by the shader core, normalized to the peak launch rate",
+          "Name": "Vertex Shader Launch Limiter",
+          "Scope": "timeline",
+          "Value": "0.00% % Peak Performance"
+        },
+        "Compute SIMD Groups Inflight": {
+          "Description": "The average number of vertex simdgroups running concurrently per shader core.",
+          "Name": "Compute SIMD Groups Inflight",
+          "Scope": "timeline",
+          "Value": "15 SIMD Groups"
+        },
+        "Fragment SIMD Groups Inflight": {
+          "Description": "The average number of fragment simdgroups running concurrently per shader core.",
+          "Name": "Fragment SIMD Groups Inflight",
+          "Scope": "timeline",
+          "Value": "0 SIMD Groups"
+        },
+        "Total SIMD Groups Inflight": {
+          "Description": "The average number of all simdgroups including vertex, fragment and compute running concurrently per shader core.",
+          "Name": "Total SIMD Groups Inflight",
+          "Scope": "timeline",
+          "Value": "15 SIMD Groups"
+        },
+        "Vertex SIMD Groups Inflight": {
+          "Description": "The average number of vertex simdgroups running concurrently per shader core.",
+          "Name": "Vertex SIMD Groups Inflight",
+          "Scope": "timeline",
+          "Value": "0 SIMD Groups"
+        },
+        "Compression Ratio of Texture Memory Read": {
+          "Description": "Ratio of compressed to uncompressed color and depth texture memory read. Indicates the memory bandwidth savings achieved from texture compression. It compares the original (uncompressed) data size to the actual (compressed) size read from memory. A value of 2.0, for instance, signifies a 2:1 compression ratio, meaning the memory transfer was half the original size. Values below 1.0 indicate that compression was counter-productive, leading to wasted bandwidth.",
+          "Name": "Compression Ratio of Texture Memory Read",
+          "Scope": "timeline",
+          "Value": "0 Ratio of compressed to uncompressed memory"
+        },
+        "Texture Filtering Limiter": {
+          "Description": "Measures the time during which texture filterings is attempted to execute as a percentage of peak texture filtering performance",
+          "Name": "Texture Filtering Limiter",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Peak Texture Filtering Performance"
+        },
+        "Texture Read Limiter": {
+          "Description": "Measures the time during which texture reads / samples are attempted to execute as a percentage of peak texture read / sampling performance",
+          "Name": "Texture Read Limiter",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Peak Texture Read Performance"
+        },
+        "Texture Read Utilization": {
+          "Description": "Measures the time during which texture reads / samples are executed as a percentage of peak texture read / sample performance",
+          "Name": "Texture Read Utilization",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Peak Texture Read Performance"
+        },
+        "Texture Read Cache Limiter": {
+          "Description": "Measures the time during which texture cache reads are attempted to execute as a percentage of peak texture read cache performance",
+          "Name": "Texture Read Cache Limiter",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Peak Texture Read Cache Performance"
+        },
+        "Texture Read Cache Utilization": {
+          "Description": "Measures the time during which texture cache reads is executed as a percentage of peak texture read cache performance",
+          "Name": "Texture Read Cache Utilization",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Peak Texture Read Cache Performance"
+        },
+        "Texture Write Limiter": {
+          "Description": "Measures the time during which texture write are attempted to execute as a percentage of peak texture write performance",
+          "Name": "Texture Write Limiter",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Peak Texture Write Performance"
+        },
+        "Texture Write Utilization": {
+          "Description": "Measures the time during which texture writes are executed as a percentage of peak texture writes performance",
+          "Name": "Texture Write Utilization",
+          "Scope": "timeline",
+          "Value": "0.00% Percentage of Peak Texture Write Performance"
+        }
+      }
+    }
+  },
+  "shader_statistics": {
+    "q4k_linear_metadata": {
+      "ALU": "237",
+      "Branch": "28",
+      "Cost": "46.50%",
+      "Device atomics": "0",
+      "Device loads": "10",
+      "Device stores": "1",
+      "FP16": "0",
+      "FP32": "21",
+      "Instructions": "317",
+      "INT16": "40",
+      "INT32": "88",
+      "Invocations": "100",
+      "SIMD groups": "78392",
+      "Spilled bytes": "272",
+      "Stage": "compute",
+      "Temp registers": "29",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "3",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "1",
+      "Uniform registers": "16",
+      "Wait": "0"
+    },
+    "rms_kernel_no_contract": {
+      "ALU": "78",
+      "Branch": "7",
+      "Cost": "21.76%",
+      "Device atomics": "0",
+      "Device loads": "3",
+      "Device stores": "1",
+      "FP16": "0",
+      "FP32": "34",
+      "Instructions": "103",
+      "INT16": "7",
+      "INT32": "3",
+      "Invocations": "45",
+      "SIMD groups": "135",
+      "Spilled bytes": "0",
+      "Stage": "compute",
+      "Temp registers": "14",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "3",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "2",
+      "Uniform registers": "24",
+      "Wait": "0"
+    },
+    "q4k_linear_metadata_acc": {
+      "ALU": "238",
+      "Branch": "28",
+      "Cost": "17.87%",
+      "Device atomics": "0",
+      "Device loads": "11",
+      "Device stores": "1",
+      "FP16": "0",
+      "FP32": "22",
+      "Instructions": "319",
+      "INT16": "40",
+      "INT32": "88",
+      "Invocations": "34",
+      "SIMD groups": "18428",
+      "Spilled bytes": "272",
+      "Stage": "compute",
+      "Temp registers": "29",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "3",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "1",
+      "Uniform registers": "16",
+      "Wait": "0"
+    },
+    "q6k_integer_dot_cooperative_acc": {
+      "ALU": "883",
+      "Branch": "27",
+      "Cost": "4.50%",
+      "Device atomics": "0",
+      "Device loads": "35",
+      "Device stores": "1",
+      "FP16": "0",
+      "FP32": "6",
+      "Instructions": "1006",
+      "INT16": "55",
+      "INT32": "425",
+      "Invocations": "10",
+      "SIMD groups": "5420",
+      "Spilled bytes": "0",
+      "Stage": "compute",
+      "Temp registers": "60",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "0",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "0",
+      "Uniform registers": "20",
+      "Wait": "0"
+    },
+    "rope_apply": {
+      "ALU": "46",
+      "Branch": "3",
+      "Cost": "3.53%",
+      "Device atomics": "0",
+      "Device loads": "4",
+      "Device stores": "2",
+      "FP16": "0",
+      "FP32": "13",
+      "Instructions": "66",
+      "INT16": "7",
+      "INT32": "11",
+      "Invocations": "44",
+      "SIMD groups": "88",
+      "Spilled bytes": "32",
+      "Stage": "compute",
+      "Temp registers": "13",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "0",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "0",
+      "Uniform registers": "20",
+      "Wait": "0"
+    },
+    "attention_cooperative": {
+      "ALU": "405",
+      "Branch": "30",
+      "Cost": "1.91%",
+      "Device atomics": "0",
+      "Device loads": "27",
+      "Device stores": "1",
+      "FP16": "0",
+      "FP32": "134",
+      "Instructions": "536",
+      "INT16": "40",
+      "INT32": "126",
+      "Invocations": "22",
+      "SIMD groups": "2068",
+      "Spilled bytes": "32",
+      "Stage": "compute",
+      "Temp registers": "34",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "11",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "6",
+      "Uniform registers": "52",
+      "Wait": "0"
+    },
+    "q6k_integer_dot": {
+      "ALU": "771",
+      "Branch": "22",
+      "Cost": "1.86%",
+      "Device atomics": "0",
+      "Device loads": "34",
+      "Device stores": "1",
+      "FP16": "0",
+      "FP32": "4",
+      "Instructions": "892",
+      "INT16": "24",
+      "INT32": "371",
+      "Invocations": "1",
+      "SIMD groups": "1030",
+      "Spilled bytes": "272",
+      "Stage": "compute",
+      "Temp registers": "46",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "0",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "0",
+      "Uniform registers": "20",
+      "Wait": "0"
+    },
+    "q6k_integer_dot_cooperative": {
+      "ALU": "882",
+      "Branch": "27",
+      "Cost": "1.02%",
+      "Device atomics": "0",
+      "Device loads": "34",
+      "Device stores": "1",
+      "FP16": "0",
+      "FP32": "5",
+      "Instructions": "1004",
+      "INT16": "55",
+      "INT32": "425",
+      "Invocations": "10",
+      "SIMD groups": "940",
+      "Spilled bytes": "0",
+      "Stage": "compute",
+      "Temp registers": "60",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "0",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "0",
+      "Uniform registers": "20",
+      "Wait": "0"
+    },
+    "q6k_quantize": {
+      "ALU": "158",
+      "Branch": "3",
+      "Cost": "0.70%",
+      "Device atomics": "0",
+      "Device loads": "8",
+      "Device stores": "5",
+      "FP16": "0",
+      "FP32": "43",
+      "Instructions": "181",
+      "INT16": "4",
+      "INT32": "39",
+      "Invocations": "21",
+      "SIMD groups": "42",
+      "Spilled bytes": "0",
+      "Stage": "compute",
+      "Temp registers": "29",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "0",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "0",
+      "Uniform registers": "16",
+      "Wait": "0"
+    },
+    "silu_mul": {
+      "ALU": "110",
+      "Branch": "8",
+      "Cost": "0.36%",
+      "Device atomics": "0",
+      "Device loads": "2",
+      "Device stores": "1",
+      "FP16": "0",
+      "FP32": "43",
+      "Instructions": "138",
+      "INT16": "12",
+      "INT32": "20",
+      "Invocations": "22",
+      "SIMD groups": "4532",
+      "Spilled bytes": "32",
+      "Stage": "compute",
+      "Temp registers": "14",
+      "Texture reads": "0",
+      "Texture writes": "0",
+      "Threadgroup atomics": "0",
+      "Threadgroup loads": "0",
+      "Threadgroup memory (bytes)": "0",
+      "Threadgroup stores": "0",
+      "Uniform registers": "36",
+      "Wait": "0"
+    }
+  },
+  "time_samples": [
+    {
+      "name": "GPU Bandwidth",
+      "unit": "GiB / Second",
+      "average": 48.79405802036364,
+      "sample_count": 1734,
+      "p50": 50.590325129704915,
+      "p95": 128.19966678040936,
+      "maximum": 261.32548566466954
+    },
+    {
+      "name": "GPU Peak Bandwidth",
+      "unit": "Percentage of Peak Memory Bandwidth",
+      "average": 5.7704016826970586,
+      "sample_count": 1196,
+      "p50": 5.664938575349803,
+      "p95": 12.667265013054829,
+      "maximum": 30.394845852580843
+    },
+    {
+      "name": "Instruction Throughput Limiter",
+      "unit": "Percentage of Peak Performance",
+      "average": 29.456059348701725,
+      "sample_count": 2012,
+      "p50": 32.54866625941764,
+      "p95": 71.65559840045701,
+      "maximum": 89.30412581699346
+    }
+  ],
+  "lookup_pilot": {
+    "records": [
+      {
+        "model": "tiny",
+        "fixture": {
+          "id": "s0-l0-wq",
+          "k": 2048,
+          "layer": 0,
+          "m": 2048,
+          "op": "wq"
+        },
+        "baseline_gpu_seconds": 0.00010571093753242167,
+        "lookup_gpu_seconds": 0.00019952343791374005,
+        "gpu_ratio": 1.887443651254592,
+        "baseline_pack_seconds": 0.000399,
+        "lookup_pack_seconds": 0.002460333,
+        "baseline_weight_bytes": 3145728,
+        "lookup_weight_bytes": 10485760
+      },
+      {
+        "model": "tiny",
+        "fixture": {
+          "id": "s0-l0-wk",
+          "k": 2048,
+          "layer": 0,
+          "m": 256,
+          "op": "wk"
+        },
+        "baseline_gpu_seconds": 6.548958390339976e-05,
+        "lookup_gpu_seconds": 9.135156324191485e-05,
+        "gpu_ratio": 1.3949021782862865,
+        "baseline_pack_seconds": 8.4333e-05,
+        "lookup_pack_seconds": 0.000266125,
+        "baseline_weight_bytes": 393216,
+        "lookup_weight_bytes": 1310720
+      },
+      {
+        "model": "tiny",
+        "fixture": {
+          "id": "s0-l0-w1",
+          "k": 2048,
+          "layer": 0,
+          "m": 5632,
+          "op": "w1"
+        },
+        "baseline_gpu_seconds": 0.00011631249981292058,
+        "lookup_gpu_seconds": 0.00011542968695721356,
+        "gpu_ratio": 0.9924099915561359,
+        "baseline_pack_seconds": 0.000986417,
+        "lookup_pack_seconds": 0.006673833,
+        "baseline_weight_bytes": 8650752,
+        "lookup_weight_bytes": 28835840
+      },
+      {
+        "model": "tiny",
+        "fixture": {
+          "id": "s0-l2-w2",
+          "k": 5632,
+          "layer": 2,
+          "m": 2048,
+          "op": "w2"
+        },
+        "baseline_gpu_seconds": 0.00013524218684324296,
+        "lookup_gpu_seconds": 0.0001932812501763692,
+        "gpu_ratio": 1.4291491041948206,
+        "baseline_pack_seconds": 0.00054025,
+        "lookup_pack_seconds": 0.005214084,
+        "baseline_weight_bytes": 8650752,
+        "lookup_weight_bytes": 28835840
+      },
+      {
+        "model": "stories",
+        "fixture": {
+          "id": "s0-l0-w2",
+          "k": 768,
+          "layer": 0,
+          "m": 288,
+          "op": "w2"
+        },
+        "baseline_gpu_seconds": 1.5429687664436642e-05,
+        "lookup_gpu_seconds": 1.8601562260300852e-05,
+        "gpu_ratio": 1.205569591870285,
+        "baseline_pack_seconds": 1.1125e-05,
+        "lookup_pack_seconds": 8.7583e-05,
+        "baseline_weight_bytes": 165888,
+        "lookup_weight_bytes": 552960
+      }
+    ],
+    "selected": "lookup",
+    "sum_gpu_ratio": 1.4107914410933435,
+    "losses": 4,
+    "fixtures": 5,
+    "all_bits_equal": true,
+    "early_stop": true,
+    "metric": "sum of per-fixture GPU medians, not weighted whole-model time",
+    "lower_load_confirmation": false,
+    "full_model_integrated": false,
+    "separate_rounding_control": [
+      {
+        "actual_bits": [
+          0,
+          2826960896
+        ],
+        "fused_bits": 2826960896,
+        "mode": "baseline",
+        "separate_bits": 0
+      },
+      {
+        "actual_bits": [
+          0,
+          2826960896
+        ],
+        "fused_bits": 2826960896,
+        "mode": "lookup",
+        "separate_bits": 0
+      }
+    ],
+    "candidate_overwrite_and_residual_words": 20544
+  },
+  "replay": {
+    "tiny": {
+      "cpu_bit_identity": true,
+      "rows": 108,
+      "raw_words": 3456000,
+      "capture_index": 63,
+      "model_blake3": "ab7591e1ec49cb5dce27865d31d436091a433a3e807e9920a572c42dda294b0d",
+      "qualification": "retained numerical engine through capture wrapper; not LUT full-model replay"
+    },
+    "stories": {
+      "cpu_bit_identity": true,
+      "rows": 64,
+      "raw_words": 2048000,
+      "capture_index": -1,
+      "model_blake3": "5a897f6d611f37f5aad9c56acc7e35c8e7ebd5a0a01865dffef94fcfa2825a3f",
+      "qualification": "retained numerical engine through capture wrapper; not LUT full-model replay"
+    }
+  },
+  "tool_limitations": {
+    "direct_per_instruction_stall_percent": "not exposed in gpudebug 1.0 exported counter tree",
+    "gui_fallback_error": "NSOSStatusErrorDomain -10664 kLSIncompatibleApplicationVersionErr when opening /Applications/Xcode.app through computer-use; UI unavailable",
+    "xcode_version": "26.6 (17F113)",
+    "standalone_metal_compiler": "missing downloadable Metal Toolchain; runtime Metal compilation and gpudebug work",
+    "first_xctrace_attempt": "sandbox denied Instruments cache creation; escalated template listing succeeded",
+    "pilot_pre_load": "not recorded; sysctl read in sandbox denied",
+    "post_pilot_load": [
+      7.98,
+      6.39,
+      4.76
+    ],
+    "qualification": "alternating within-process early rejection only, not a lower-load confirmation or full-model performance result"
+  }
+}

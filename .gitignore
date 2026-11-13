@@ -2,3 +2,12 @@ target/
 Cargo.lock
 *.gguf
 *.bin
+
+# Optional Python binding build products
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+!bindings/torch/native/Cargo.lock

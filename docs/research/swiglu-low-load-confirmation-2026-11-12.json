@@ -1,0 +1,166 @@
+{
+  "early_stop": false,
+  "history": {
+    "tiny": {
+      "baseline": {
+        "setup_seconds": {
+          "median": 0.6119422089977888,
+          "observations": [
+            0.5545379170071101,
+            0.6119422089977888,
+            0.6518442910019075
+          ]
+        },
+        "forward_seconds": {
+          "median": 1.256647286,
+          "observations": [
+            1.260897003,
+            1.256647286,
+            1.24350096
+          ]
+        },
+        "process_seconds": {
+          "median": 2.7785862919990905,
+          "observations": [
+            2.71838991700497,
+            2.7785862919990905,
+            2.827394958003424
+          ]
+        },
+        "all_outputs_equal": true,
+        "load_gate": true
+      },
+      "candidate": {
+        "setup_seconds": {
+          "median": 0.6299087079969468,
+          "observations": [
+            0.6299087079969468,
+            0.6241193749883678,
+            0.6444537499919534
+          ]
+        },
+        "forward_seconds": {
+          "median": 1.288096839,
+          "observations": [
+            1.29957454,
+            1.288096839,
+            1.28181379
+          ]
+        },
+        "process_seconds": {
+          "median": 2.8264452919975156,
+          "observations": [
+            2.814499040992814,
+            2.8328742919984506,
+            2.8264452919975156
+          ]
+        },
+        "all_outputs_equal": true,
+        "load_gate": true
+      }
+    },
+    "stories": {
+      "baseline": {
+        "setup_seconds": {
+          "median": 0.10763637500349432,
+          "observations": [
+            0.10763637500349432
+          ]
+        },
+        "forward_seconds": {
+          "median": 0.334548917,
+          "observations": [
+            0.334548917
+          ]
+        },
+        "process_seconds": {
+          "median": 1.0269891670031939,
+          "observations": [
+            1.0269891670031939
+          ]
+        },
+        "all_outputs_equal": true,
+        "load_gate": true
+      },
+      "candidate": {
+        "setup_seconds": {
+          "median": 0.09007066699268762,
+          "observations": [
+            0.09007066699268762
+          ]
+        },
+        "forward_seconds": {
+          "median": 0.222327371,
+          "observations": [
+            0.222327371
+          ]
+        },
+        "process_seconds": {
+          "median": 0.7873372920003021,
+          "observations": [
+            0.7873372920003021
+          ]
+        },
+        "all_outputs_equal": true,
+        "load_gate": true
+      }
+    }
+  },
+  "pairs": [
+    {
+      "repetition": 0,
+      "forward_ratio": 1.0306746204551016,
+      "worker_ratio": 1.0353551649771178
+    },
+    {
+      "repetition": 1,
+      "forward_ratio": 1.0250265554625964,
+      "worker_ratio": 1.019537993171449
+    },
+    {
+      "repetition": 2,
+      "forward_ratio": 1.0308104547020214,
+      "worker_ratio": 0.9996641197922419
+    }
+  ],
+  "load_gate": true,
+  "forward_reduction": -0.025026555462596356,
+  "process_ratio": 1.0172242266278484,
+  "paired_wins": 0,
+  "cpu_words_by_mode": {
+    "baseline": 12416000,
+    "candidate": 12416000
+  },
+  "actual_fused_calls_per_step": {
+    "tiny": 22,
+    "stories": 0
+  },
+  "ordinary": {
+    "median": 0.510426451874082,
+    "observations": [
+      0.510426451874082,
+      0.51186145695101,
+      0.5069459160149563
+    ]
+  },
+  "ratios": {
+    "baseline": 2.4619556478432756,
+    "candidate": 2.5235699174104775
+  },
+  "retention_gate": false,
+  "one_minute_load_range": [
+    3.93,
+    6.72
+  ],
+  "retained": false,
+  "active_engine_unchanged": true,
+  "main_and_defaults_unchanged": true,
+  "conclusion": "Fusion loses all three paired forwards; stop, keep the concurrent baseline.",
+  "source_provenance": {
+    "starting_commit": "492ee61f7c9ce6891d02e91dfa1f9da826f906e4",
+    "baseline": "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/bin/concurrent-predictor",
+    "baseline_sha256": "2bac0837d5280e5874cb8e2b4409fc645ec90e75e282f9c8093d0bfff7098a0b",
+    "candidate": "<workspace>/outputs/vitni-metal-q4-prepare-swiglu-2026-11-12/bin/fusion-predictor",
+    "candidate_sha256": "dd055779ab6cda7313005055602d7b9dcf2e014aab1c9425289b66c8734e875d"
+  }
+}

@@ -1,0 +1,58 @@
+name: Optional PyTorch operators
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  wheel:
+    name: wheel and CPU contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bindings/torch/native
+      - name: Build tooling
+        run: python -m pip install build pytest numpy
+      - name: Install CPU PyTorch on Linux
+        if: runner.os == 'Linux'
+        run: python -m pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install PyTorch on macOS
+        if: runner.os == 'macOS'
+        run: python -m pip install torch==2.14.1
+      - name: Build wheel and source distribution
+        run: python -m build
+      - name: Verify macOS native wheel tag
+        if: runner.os == 'macOS'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess, tempfile, zipfile
+          wheel = next(Path('dist').glob('*.whl'))
+          with zipfile.ZipFile(wheel) as archive, tempfile.TemporaryDirectory() as tmp:
+              name = next(n for n in archive.namelist() if n.endswith('.dylib'))
+              native = Path(tmp) / 'native.dylib'
+              native.write_bytes(archive.read(name))
+              arch = subprocess.check_output(['lipo', '-archs', str(native)], text=True).strip()
+              assert arch in ('arm64', 'x86_64'), arch
+              assert wheel.name.endswith('_' + arch + '.whl'), (wheel.name, arch)
+              print('Verified native wheel architecture:', arch)
+          PY
+      - name: Install the built wheel
+        run: python -m pip install --no-deps dist/*.whl
+      - name: Test installed package
+        run: python -m pytest -q python/tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vitni-torch-${{ matrix.os }}
+          path: dist/

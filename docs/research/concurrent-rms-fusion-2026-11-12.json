@@ -1,0 +1,1601 @@
+{
+  "independent_experiments": true,
+  "baseline": {
+    "baseline_commit": "cfe8c718cfef21a7e5c15b6d90174ac241ea70b9",
+    "branch": "research/metal-canonical-row-parallel-2026-11-11",
+    "main": "b4d7e6456bef8b7f34c554ca993a41bebe17e317",
+    "baseline_binary": "<workspace>/outputs/vitni-metal-threadcap-rms-rounding-2026-11-12/bin/predictor",
+    "baseline_binary_sha256": "832c37d41786eeeee8d0fb1191ae97490b86ea9f400cc24a0b630248efd836a5",
+    "baseline": "metadata Q4 + RMS no_contract + original cooperative Q6/attention; original classifier; within-block Q6 remains archived",
+    "independent_candidates": {
+      "concurrent": "Same kernels, buffers, grids and arithmetic, explicit concurrent encoder; audit all RAW/WAR/WAW dependencies including pre-quantization Q6 scratch-reuse barrier. Pair pilot uses real independent gate/up inputs and CPU outputs.",
+      "fusion": "Standalone FFN RMS folded into each supported metadata-Q4 projection workgroup, duplicating exact canonical normalization into dynamic threadgroup storage. No scalar factor moved through dot, no reassociation. Both gate/up must qualify before omitting standalone RMS. Initial domain K divisible256 <=4096, ordinary64-thread groups."
+    },
+    "load": "Two one-minute averages<7 at least10 seconds apart before every cohort, bounded180s; before/after readings<7; no background-app changes",
+    "correctness": "All raw CPU words, residual/overwrite forms and padded guards; concurrent scratch-reuse tests, repeated model histories; fusion CPU RMS+Q4 boundary tests; any mismatch stops that candidate",
+    "pilot": "Three alternating batches x16 resident repetitions; current serial gate/up vs concurrent pair, current RMS-no_contract+Q4 vs fused. Stop >5% summed GPU regression with>=75% fixture losses, or>10% regression on all fixtures. Otherwise9 batches then bounded model screen. No combined candidate.",
+    "full": "3 fresh alternating108-step TinyLlama pairs; full64-step second network numerical check; fresh ordinary controls when screen does not regress; first-pair stop for>10% forward or>15% fresh-worker regression. Below-gate and mixed results remain recorded.",
+    "retention": ">=3% median full-history forward reduction,3/3 paired wins,<=2% fresh-worker regression, all lower-load qualifications; extra certificates/regime/recovery before retaining. Archive clear failures and no repeat cohort to seek a pass.",
+    "scope": "Research branch only; no main/defaults/push/release/paid compute"
+  },
+  "concurrent": {
+    "pilot": {
+      "decision": {
+        "command": [
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/native/target/release/experiment-probe",
+          "concurrent",
+          "3",
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/concurrent/pilot.json"
+        ],
+        "exit": 0,
+        "before": {
+          "utc": "2026-11-12T20:57:47.821230+00:00",
+          "values": [
+            3.79,
+            3.74,
+            3.72
+          ]
+        },
+        "after": {
+          "utc": "2026-11-12T20:57:48.332521+00:00",
+          "values": [
+            3.79,
+            3.74,
+            3.72
+          ]
+        },
+        "lower_load_qualified": true,
+        "gpu_sum_ratio": 0.9352070424824002,
+        "fixture_losses": 0,
+        "fixtures": 6,
+        "early_stop": false,
+        "all_bits_equal_cpu": true,
+        "guards_passed": true
+      },
+      "scalar_comparisons_both_modes": 135168,
+      "records": [
+        {
+          "fixture": {
+            "id": "s0-l0-gate",
+            "k": 2048,
+            "layer": 0,
+            "m": 5632,
+            "op": "gate",
+            "step": 0
+          },
+          "baseline_gpu_us": 258.25520879152464,
+          "candidate_gpu_us": 251.9453128115856,
+          "ratio": 0.9755672073006176,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00025825520879152464,
+              "gpu_seconds": [
+                0.00030554947898053797,
+                0.00025825520879152464,
+                0.00021002343783038668
+              ],
+              "host_median": 0.0003048046875,
+              "host_seconds": [
+                0.0003231171875,
+                0.0003048046875,
+                0.000228
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0002519453128115856,
+              "gpu_seconds": [
+                0.0002550078124841093,
+                0.0002519453128115856,
+                0.00018524739607528318
+              ],
+              "host_median": 0.00029995575,
+              "host_seconds": [
+                0.00029995575,
+                0.0003006328125,
+                0.0002015104375
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s0-l11-gate",
+            "k": 2048,
+            "layer": 11,
+            "m": 5632,
+            "op": "gate",
+            "step": 0
+          },
+          "baseline_gpu_us": 167.87760432634968,
+          "candidate_gpu_us": 155.42187520622974,
+          "ratio": 0.9258047005727678,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00016787760432634968,
+              "gpu_seconds": [
+                0.0001708932295514387,
+                0.00016787760432634968,
+                0.00016244531252596062
+              ],
+              "host_median": 0.0001829296875,
+              "host_seconds": [
+                0.0001861510625,
+                0.0001829296875,
+                0.000179466125
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00015542187520622974,
+              "gpu_seconds": [
+                0.00015542187520622974,
+                0.00015705729128967505,
+                0.00014921093679731712
+              ],
+              "host_median": 0.000174510375,
+              "host_seconds": [
+                0.000174510375,
+                0.000174684875,
+                0.0001662708125
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s0-l21-gate",
+            "k": 2048,
+            "layer": 21,
+            "m": 5632,
+            "op": "gate",
+            "step": 0
+          },
+          "baseline_gpu_us": 162.91406245727558,
+          "candidate_gpu_us": 150.2526047261199,
+          "ratio": 0.9222813700660362,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00016291406245727558,
+              "gpu_seconds": [
+                0.00016040624996094266,
+                0.00016291406245727558,
+                0.00016390885502914898
+              ],
+              "host_median": 0.0001789296875,
+              "host_seconds": [
+                0.000174875,
+                0.0001789296875,
+                0.0001804479375
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0001502526047261199,
+              "gpu_seconds": [
+                0.0001502526047261199,
+                0.00015024739604996284,
+                0.0001511484369984828
+              ],
+              "host_median": 0.0001670051875,
+              "host_seconds": [
+                0.0001695364375,
+                0.0001670051875,
+                0.0001666041875
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l0-gate",
+            "k": 2048,
+            "layer": 0,
+            "m": 5632,
+            "op": "gate",
+            "step": 7
+          },
+          "baseline_gpu_us": 162.63020825135754,
+          "candidate_gpu_us": 150.18749945738818,
+          "ratio": 0.9234907897631282,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00016263020825135754,
+              "gpu_seconds": [
+                0.0001608984375707223,
+                0.00016412239529017825,
+                0.00016263020825135754
+              ],
+              "host_median": 0.000178739625,
+              "host_seconds": [
+                0.0001758046875,
+                0.0001807838125,
+                0.000178739625
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00015018749945738818,
+              "gpu_seconds": [
+                0.0001481510416851961,
+                0.00015227083349600434,
+                0.00015018749945738818
+              ],
+              "host_median": 0.0001675051875,
+              "host_seconds": [
+                0.0001675051875,
+                0.000174291625,
+                0.0001659974375
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l11-gate",
+            "k": 2048,
+            "layer": 11,
+            "m": 5632,
+            "op": "gate",
+            "step": 7
+          },
+          "baseline_gpu_us": 161.99218771362212,
+          "candidate_gpu_us": 148.41145821264945,
+          "ratio": 0.9161642935214792,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00016199218771362212,
+              "gpu_seconds": [
+                0.00016199218771362212,
+                0.00018368229211773723,
+                0.00016082812453532824
+              ],
+              "host_median": 0.00017650525,
+              "host_seconds": [
+                0.00017650525,
+                0.0001981926875,
+                0.00017459375
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00014841145821264945,
+              "gpu_seconds": [
+                0.0001488046882514027,
+                0.00014841145821264945,
+                0.00014820312571828254
+              ],
+              "host_median": 0.000163997375,
+              "host_seconds": [
+                0.0001619166875,
+                0.000164138,
+                0.000163997375
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l21-gate",
+            "k": 2048,
+            "layer": 21,
+            "m": 5632,
+            "op": "gate",
+            "step": 7
+          },
+          "baseline_gpu_us": 160.8671873327694,
+          "candidate_gpu_us": 148.69531332806218,
+          "ratio": 0.924335881005189,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.0001608671873327694,
+              "gpu_seconds": [
+                0.0001608671873327694,
+                0.00016070833407866303,
+                0.0001630781252970337
+              ],
+              "host_median": 0.0001759323125,
+              "host_seconds": [
+                0.0001759323125,
+                0.0001738020625,
+                0.000177802125
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00014869531332806218,
+              "gpu_seconds": [
+                0.00014791406283620745,
+                0.00014869531332806218,
+                0.00016535156282770913
+              ],
+              "host_median": 0.0001653671875,
+              "host_seconds": [
+                0.000165125,
+                0.0001653671875,
+                0.0001786328125
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "confirmation": {
+      "decision": {
+        "command": [
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/native/target/release/experiment-probe",
+          "concurrent",
+          "9",
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/concurrent/confirmation.json"
+        ],
+        "exit": 0,
+        "before": {
+          "utc": "2026-11-12T20:58:39.930590+00:00",
+          "values": [
+            3.76,
+            3.72,
+            3.71
+          ]
+        },
+        "after": {
+          "utc": "2026-11-12T20:58:40.528240+00:00",
+          "values": [
+            3.76,
+            3.72,
+            3.71
+          ]
+        },
+        "lower_load_qualified": true,
+        "gpu_sum_ratio": 0.9174371121076266,
+        "fixture_losses": 0,
+        "fixtures": 6,
+        "early_stop": false,
+        "all_bits_equal_cpu": true,
+        "guards_passed": true
+      },
+      "scalar_comparisons_both_modes": 135168,
+      "records": [
+        {
+          "fixture": {
+            "id": "s0-l0-gate",
+            "k": 2048,
+            "layer": 0,
+            "m": 5632,
+            "op": "gate",
+            "step": 0
+          },
+          "baseline_gpu_us": 164.35156248917338,
+          "candidate_gpu_us": 151.79166712186998,
+          "ratio": 0.9235790936387916,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00016435156248917338,
+              "gpu_seconds": [
+                0.000544226561942196,
+                0.00021011458284192486,
+                0.0002048593751169392,
+                0.00016435156248917338,
+                0.0001633854162719217,
+                0.00016074999984994065,
+                0.00016521875022590393,
+                0.00016238281295954948,
+                0.00016309114653267898
+              ],
+              "host_median": 0.0001820390625,
+              "host_seconds": [
+                0.000590151,
+                0.000229109375,
+                0.0002215208125,
+                0.0001820390625,
+                0.000178916625,
+                0.000178247375,
+                0.0002110885,
+                0.000177809875,
+                0.000180263
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00015179166712186998,
+              "gpu_seconds": [
+                0.00025343229208374396,
+                0.00021744270816270728,
+                0.00019141666689392878,
+                0.00015983593675628072,
+                0.00014845312489342177,
+                0.00015179166712186998,
+                0.0001513697916379897,
+                0.00015145312499953434,
+                0.0001511796881459304
+              ],
+              "host_median": 0.0001706015625,
+              "host_seconds": [
+                0.0002763671875,
+                0.000267690125,
+                0.00020946875,
+                0.0001805260625,
+                0.00016440625,
+                0.0001706015625,
+                0.0001683046875,
+                0.0001677578125,
+                0.00016808075
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s0-l11-gate",
+            "k": 2048,
+            "layer": 11,
+            "m": 5632,
+            "op": "gate",
+            "step": 0
+          },
+          "baseline_gpu_us": 162.8671880098409,
+          "candidate_gpu_us": 150.03385396994418,
+          "ratio": 0.9212036862874964,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.0001628671880098409,
+              "gpu_seconds": [
+                0.00016143749962793663,
+                0.0001628671880098409,
+                0.00016389062511734664,
+                0.00016244531252596062,
+                0.0001636953129491303,
+                0.00018108593758370262,
+                0.0001625364584469935,
+                0.00016367187527066562,
+                0.00016112499997689156
+              ],
+              "host_median": 0.00017956775,
+              "host_seconds": [
+                0.000175375,
+                0.00017956775,
+                0.0001809115,
+                0.00017978125,
+                0.00018094275,
+                0.0001961380625,
+                0.000179265625,
+                0.0001789400625,
+                0.000175221375
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00015003385396994418,
+              "gpu_seconds": [
+                0.00015031250040919986,
+                0.00016738281283323886,
+                0.00014948437456041574,
+                0.00014977864611864788,
+                0.00014977343744249083,
+                0.00014964062484068563,
+                0.00015003385396994418,
+                0.00015029947917355457,
+                0.00015604947930114577
+              ],
+              "host_median": 0.0001666171875,
+              "host_seconds": [
+                0.0001658255625,
+                0.000181763,
+                0.0001662083125,
+                0.0001665078125,
+                0.00017296875,
+                0.0001666171875,
+                0.0001677213125,
+                0.000166427125,
+                0.0001978489375
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s0-l21-gate",
+            "k": 2048,
+            "layer": 21,
+            "m": 5632,
+            "op": "gate",
+            "step": 0
+          },
+          "baseline_gpu_us": 163.11458330164896,
+          "candidate_gpu_us": 149.4218749940046,
+          "ratio": 0.9160546651900381,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00016311458330164896,
+              "gpu_seconds": [
+                0.00016002083339117235,
+                0.00018051562528853538,
+                0.0001618515625523287,
+                0.0001630234382901108,
+                0.00016351041722373338,
+                0.000164304687132244,
+                0.0001606796877240413,
+                0.00016335156306013232,
+                0.00016311458330164896
+              ],
+              "host_median": 0.0001788931875,
+              "host_seconds": [
+                0.000190104125,
+                0.0001954166875,
+                0.0001766198125,
+                0.0001788931875,
+                0.0001785495,
+                0.00017849475,
+                0.0001741849375,
+                0.0001789921875,
+                0.0001797056875
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0001494218749940046,
+              "gpu_seconds": [
+                0.00015064322906255256,
+                0.00015081250057846773,
+                0.00014926562562322943,
+                0.0001494218749940046,
+                0.00014913020822859835,
+                0.0001488385414631921,
+                0.00017173177093354752,
+                0.00014954687503632158,
+                0.00014904427098372253
+              ],
+              "host_median": 0.0001654375,
+              "host_seconds": [
+                0.0001637239375,
+                0.0001728046875,
+                0.0001659921875,
+                0.0001659869375,
+                0.0001654375,
+                0.00016313025,
+                0.0001862865,
+                0.00016475,
+                0.000165059875
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l0-gate",
+            "k": 2048,
+            "layer": 0,
+            "m": 5632,
+            "op": "gate",
+            "step": 7
+          },
+          "baseline_gpu_us": 163.83593720092904,
+          "candidate_gpu_us": 149.70572919992264,
+          "ratio": 0.9137539160063701,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00016383593720092904,
+              "gpu_seconds": [
+                0.00016370312459912384,
+                0.00018747135436569806,
+                0.00016383593720092904,
+                0.0001648359375394648,
+                0.00017986718739848584,
+                0.00016348437475244282,
+                0.00016564843735977774,
+                0.00016340104230039287,
+                0.00016349218731193105
+              ],
+              "host_median": 0.000179890625,
+              "host_seconds": [
+                0.000177690125,
+                0.00020040625,
+                0.00018106775,
+                0.00018020575,
+                0.000195612,
+                0.00017963025,
+                0.000178026,
+                0.0001792291875,
+                0.000179890625
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00014970572919992264,
+              "gpu_seconds": [
+                0.00015235937553370604,
+                0.00014805468799750088,
+                0.00014970572919992264,
+                0.00014910937534295954,
+                0.00015103906207514228,
+                0.00014950260447221808,
+                0.00014946093779144576,
+                0.00017239322914974764,
+                0.0001499531244917307
+              ],
+              "host_median": 0.0001647578125,
+              "host_seconds": [
+                0.0001678515625,
+                0.00016371875,
+                0.0001654791875,
+                0.00016325,
+                0.00016714325,
+                0.000164458375,
+                0.0001646224375,
+                0.0001876198125,
+                0.0001647578125
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l11-gate",
+            "k": 2048,
+            "layer": 11,
+            "m": 5632,
+            "op": "gate",
+            "step": 7
+          },
+          "baseline_gpu_us": 162.9322923690779,
+          "candidate_gpu_us": 149.4999996793922,
+          "ratio": 0.9175590517117468,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.0001629322923690779,
+              "gpu_seconds": [
+                0.00016281770876958035,
+                0.00016165885426744353,
+                0.0001822708336476353,
+                0.0001629322923690779,
+                0.00016304687505908078,
+                0.00016254947877314407,
+                0.00016332812447217293,
+                0.00015944531241984805,
+                0.0001833750002333545
+              ],
+              "host_median": 0.00017829425,
+              "host_seconds": [
+                0.00017829425,
+                0.000175609375,
+                0.00019758075,
+                0.0001792864375,
+                0.0001778984375,
+                0.0001781510625,
+                0.0001786328125,
+                0.000173395875,
+                0.0001985234375
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0001494999996793922,
+              "gpu_seconds": [
+                0.00014924218794476474,
+                0.00014967968763812678,
+                0.0001494999996793922,
+                0.00014948437546991045,
+                0.0001491562497903942,
+                0.00015051041737024207,
+                0.00014890625061525498,
+                0.00015012239600764588,
+                0.00015063541650306433
+              ],
+              "host_median": 0.000165216125,
+              "host_seconds": [
+                0.000164502625,
+                0.0001646693125,
+                0.00016858075,
+                0.0001656640625,
+                0.0001651119375,
+                0.00016641925,
+                0.000165216125,
+                0.0001619609375,
+                0.000166875
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l21-gate",
+            "k": 2048,
+            "layer": 21,
+            "m": 5632,
+            "op": "gate",
+            "step": 7
+          },
+          "baseline_gpu_us": 163.6848955968162,
+          "candidate_gpu_us": 149.3567715442623,
+          "ratio": 0.9124652033389414,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.0001636848955968162,
+              "gpu_seconds": [
+                0.00016016666722862283,
+                0.00016220572888414608,
+                0.00016329166737705236,
+                0.00016405468704761006,
+                0.00016398958359786775,
+                0.00016324479202012299,
+                0.0001640937498450512,
+                0.0001636848955968162,
+                0.00016440625040559098
+              ],
+              "host_median": 0.000179302125,
+              "host_seconds": [
+                0.00017380725,
+                0.000179302125,
+                0.00017671875,
+                0.00017973175,
+                0.0001801015625,
+                0.000179138,
+                0.000179841125,
+                0.000179127625,
+                0.00017994275
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0001493567715442623,
+              "gpu_seconds": [
+                0.00015211718800856033,
+                0.00014827604172751307,
+                0.0001513906254331232,
+                0.00016831510401971173,
+                0.0001493567715442623,
+                0.0001483281248511048,
+                0.00014863281194266165,
+                0.00014885677137499442,
+                0.00014935937451809878
+              ],
+              "host_median": 0.00016720575,
+              "host_seconds": [
+                0.0001796068125,
+                0.0001705025625,
+                0.00016720575,
+                0.0001827865,
+                0.000165513,
+                0.0001634400625,
+                0.0001673645625,
+                0.000163875,
+                0.00016404425
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "cohort": {
+      "early_stop": false,
+      "lower_load_start": true,
+      "history": {
+        "tiny": {
+          "baseline": {
+            "setup_seconds": {
+              "median": 0.5959687079885043,
+              "observations": [
+                0.6179800829995656,
+                0.5416099590074737,
+                0.5959687079885043
+              ]
+            },
+            "forward_seconds": {
+              "median": 1.442489008,
+              "observations": [
+                1.449550874,
+                1.439832976,
+                1.442489008
+              ]
+            },
+            "process_seconds": {
+              "median": 2.926154165994376,
+              "observations": [
+                2.9891623750008876,
+                2.8595100000093225,
+                2.926154165994376
+              ]
+            },
+            "all_outputs_equal": true,
+            "load_gate": true
+          },
+          "candidate": {
+            "setup_seconds": {
+              "median": 0.5980983750050655,
+              "observations": [
+                0.9907393750036135,
+                0.5980983750050655,
+                0.5384334999980638
+              ]
+            },
+            "forward_seconds": {
+              "median": 1.261574538,
+              "observations": [
+                1.273654914,
+                1.261574538,
+                1.254194799
+              ]
+            },
+            "process_seconds": {
+              "median": 2.7523406670079567,
+              "observations": [
+                3.1744598749937722,
+                2.7523406670079567,
+                2.6758779160009
+              ]
+            },
+            "all_outputs_equal": true,
+            "load_gate": true
+          }
+        },
+        "stories": {
+          "baseline": {
+            "setup_seconds": {
+              "median": 0.09039275000395719,
+              "observations": [
+                0.09039275000395719
+              ]
+            },
+            "forward_seconds": {
+              "median": 0.484199667,
+              "observations": [
+                0.484199667
+              ]
+            },
+            "process_seconds": {
+              "median": 1.1586885830038227,
+              "observations": [
+                1.1586885830038227
+              ]
+            },
+            "all_outputs_equal": true,
+            "load_gate": true
+          },
+          "candidate": {
+            "setup_seconds": {
+              "median": 0.06595354199816938,
+              "observations": [
+                0.06595354199816938
+              ]
+            },
+            "forward_seconds": {
+              "median": 0.21944925,
+              "observations": [
+                0.21944925
+              ]
+            },
+            "process_seconds": {
+              "median": 0.7453124169987859,
+              "observations": [
+                0.7453124169987859
+              ]
+            },
+            "all_outputs_equal": true,
+            "load_gate": true
+          }
+        }
+      },
+      "forward_reduction": 0.1254182659255313,
+      "process_ratio": 0.9406000199831053,
+      "paired_wins": 3,
+      "load_gate": true,
+      "ordinary": {
+        "median": 0.5116044170281384,
+        "observations": [
+          0.5116044170281384,
+          0.5049207889678655,
+          0.5158973360230448
+        ]
+      },
+      "ratios": {
+        "baseline": 2.8195397850145274,
+        "candidate": 2.46591799446996
+      },
+      "retention_gate": true
+    },
+    "full_cpu_word_comparisons": {
+      "baseline": 12416000,
+      "candidate": 12416000
+    },
+    "driver_correction": {
+      "failed_run": "concurrent/complete.log",
+      "failure": "Orchestrator looked for cooperative/result.json after mode was renamed candidate; no GPU or numerical failure.",
+      "fix": "Read candidate directory; resume existing lower-load-qualified CPU-verified pair0 without rerunning or discarding it.",
+      "binaries_and_kernels_unchanged": true,
+      "resumed_log": "concurrent/complete-resumed.log",
+      "validation_build_correction": {
+        "reason": "CPU reference test was unoptimized and still on first regime-switch after73s; terminated task-owned child to rebuild release tests.",
+        "debug_run_saved": "concurrent/debug-validation-aborted",
+        "not_a_numerical_failure": true,
+        "measured_predictor_unchanged": true
+      }
+    },
+    "additional_validation": [
+      {
+        "name": "tiny-regime-switch",
+        "command": [
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/bin/concurrent-metadata-tests",
+          "metadata_model_replays_across_regime_switches",
+          "--exact",
+          "--ignored",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "model": "<workspace>/work/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "exit": 0,
+        "seconds": 3.1009835410077358
+      },
+      {
+        "name": "stories-regime-switch",
+        "command": [
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/bin/concurrent-metadata-tests",
+          "metadata_model_replays_across_regime_switches",
+          "--exact",
+          "--ignored",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "model": "<workspace>/outputs/vitni-metal-q4-layout-2026-11-11/stories15M-requantized-q4_k_m.gguf",
+        "exit": 0,
+        "seconds": 0.2554075000080047
+      },
+      {
+        "name": "metal_certificate_matches_cpu",
+        "command": [
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/bin/concurrent-certificates",
+          "tests::metal_certificate_matches_cpu",
+          "--exact",
+          "--ignored",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "model": "<workspace>/work/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "exit": 0,
+        "seconds": 6.370789042004617
+      },
+      {
+        "name": "metal_regime3_matches_cpu",
+        "command": [
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/bin/concurrent-certificates",
+          "tests::metal_regime3_matches_cpu",
+          "--exact",
+          "--ignored",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "model": "<workspace>/work/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "exit": 0,
+        "seconds": 9.163273666999885
+      },
+      {
+        "name": "codec-checks",
+        "command": [
+          "<workspace>/work/vitni-subtext-gonka-venv/bin/python",
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/run_codec_checks.py"
+        ],
+        "model": "<workspace>/work/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "exit": 0,
+        "seconds": 51.84890779199486
+      }
+    ],
+    "retained": true,
+    "codec": {
+      "fresh_encodes": [
+        "baseline",
+        "cooperative"
+      ],
+      "all_covers_keys_tables_and_full_row_hashes_equal_frozen_cpu": true,
+      "cpu_to_candidate_exact_file_recovery": true,
+      "candidate_to_cpu_exact_file_recovery": true,
+      "timing_repetitions": 1
+    }
+  },
+  "fusion": {
+    "pilot": {
+      "decision": {
+        "command": [
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/native/target/release/experiment-probe",
+          "fusion",
+          "3",
+          "<workspace>/outputs/vitni-metal-concurrent-rms-fusion-2026-11-12/fusion/pilot.json"
+        ],
+        "exit": 0,
+        "before": {
+          "utc": "2026-11-12T20:59:24.068754+00:00",
+          "values": [
+            4.01,
+            3.85,
+            3.76
+          ]
+        },
+        "after": {
+          "utc": "2026-11-12T20:59:24.470051+00:00",
+          "values": [
+            4.01,
+            3.85,
+            3.76
+          ]
+        },
+        "lower_load_qualified": true,
+        "gpu_sum_ratio": 1.3295515030268825,
+        "fixture_losses": 12,
+        "fixtures": 12,
+        "early_stop": true,
+        "all_bits_equal_cpu": true,
+        "guards_passed": true
+      },
+      "scalar_comparisons_both_modes": 270336,
+      "records": [
+        {
+          "fixture": {
+            "id": "s0-l0-gate",
+            "k": 2048,
+            "layer": 0,
+            "m": 5632,
+            "op": "gate",
+            "step": 0
+          },
+          "baseline_gpu_us": 197.95312528003706,
+          "candidate_gpu_us": 320.0312494300306,
+          "ratio": 1.6167021812729354,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00019795312528003706,
+              "gpu_seconds": [
+                0.000528359375493892,
+                0.00019795312528003706,
+                0.00017680468772596214
+              ],
+              "host_median": 0.000216114625,
+              "host_seconds": [
+                0.0005696536875,
+                0.000216114625,
+                0.0001953801875
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0003200312494300306,
+              "gpu_seconds": [
+                0.00041423177117394516,
+                0.0003200312494300306,
+                0.00020974218750779983
+              ],
+              "host_median": 0.0003401145625,
+              "host_seconds": [
+                0.00045059375,
+                0.0003401145625,
+                0.000225703125
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s0-l0-up",
+            "k": 2048,
+            "layer": 0,
+            "m": 5632,
+            "op": "up",
+            "step": 0
+          },
+          "baseline_gpu_us": 127.89062566298526,
+          "candidate_gpu_us": 173.9114577503642,
+          "ratio": 1.3598452337597604,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00012789062566298526,
+              "gpu_seconds": [
+                0.00016803906237328192,
+                0.00012789062566298526,
+                0.00012687760408880422
+              ],
+              "host_median": 0.000143247375,
+              "host_seconds": [
+                0.0001841275625,
+                0.000143247375,
+                0.000142791625
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0001739114577503642,
+              "gpu_seconds": [
+                0.0001739114577503642,
+                0.00019768489619309548,
+                0.00016344531286449637
+              ],
+              "host_median": 0.0001926640625,
+              "host_seconds": [
+                0.0001926640625,
+                0.0002135051875,
+                0.000177283875
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s0-l11-gate",
+            "k": 2048,
+            "layer": 11,
+            "m": 5632,
+            "op": "gate",
+            "step": 0
+          },
+          "baseline_gpu_us": 127.21614530164516,
+          "candidate_gpu_us": 164.239582773007,
+          "ratio": 1.29102782027843,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00012721614530164516,
+              "gpu_seconds": [
+                0.0001271562496185652,
+                0.00012721614530164516,
+                0.0001292447923333384
+              ],
+              "host_median": 0.000140864625,
+              "host_seconds": [
+                0.000140138,
+                0.000140864625,
+                0.00016818225
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.000164239582773007,
+              "gpu_seconds": [
+                0.00016524739567103097,
+                0.000164239582773007,
+                0.00016415885420428822
+              ],
+              "host_median": 0.0001783489375,
+              "host_seconds": [
+                0.0001777578125,
+                0.0001783489375,
+                0.0001827265625
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s0-l11-up",
+            "k": 2048,
+            "layer": 11,
+            "m": 5632,
+            "op": "up",
+            "step": 0
+          },
+          "baseline_gpu_us": 128.86718832305633,
+          "candidate_gpu_us": 163.83593720092904,
+          "ratio": 1.2713549456065556,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00012886718832305633,
+              "gpu_seconds": [
+                0.0001267031248062267,
+                0.00012886718832305633,
+                0.00014515364546241472
+              ],
+              "host_median": 0.0001421301875,
+              "host_seconds": [
+                0.0001399583125,
+                0.0001421301875,
+                0.0001584166875
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00016383593720092904,
+              "gpu_seconds": [
+                0.00016383593720092904,
+                0.00016348177086911164,
+                0.00016493749990331708
+              ],
+              "host_median": 0.000177234375,
+              "host_seconds": [
+                0.0001768568125,
+                0.000177234375,
+                0.000177690125
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s0-l21-gate",
+            "k": 2048,
+            "layer": 21,
+            "m": 5632,
+            "op": "gate",
+            "step": 0
+          },
+          "baseline_gpu_us": 130.3515628023888,
+          "candidate_gpu_us": 165.36979183001677,
+          "ratio": 1.2686444893699904,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.0001303515628023888,
+              "gpu_seconds": [
+                0.0001303515628023888,
+                0.00013134895834809868,
+                0.00012960677122464404
+              ],
+              "host_median": 0.0001474765625,
+              "host_seconds": [
+                0.0001490338125,
+                0.0001474765625,
+                0.0001411484375
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00016536979183001677,
+              "gpu_seconds": [
+                0.00016536979183001677,
+                0.00016636979216855252,
+                0.00016344531286449637
+              ],
+              "host_median": 0.0001793671875,
+              "host_seconds": [
+                0.0001793671875,
+                0.00018113025,
+                0.000178096375
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s0-l21-up",
+            "k": 2048,
+            "layer": 21,
+            "m": 5632,
+            "op": "up",
+            "step": 0
+          },
+          "baseline_gpu_us": 127.343750136788,
+          "candidate_gpu_us": 163.97135459556011,
+          "ratio": 1.2876278138458155,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.000127343750136788,
+              "gpu_seconds": [
+                0.0001271562496185652,
+                0.000127343750136788,
+                0.00012957031231053406
+              ],
+              "host_median": 0.0001441301875,
+              "host_seconds": [
+                0.0001441301875,
+                0.000143028625,
+                0.0001466615
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00016397135459556011,
+              "gpu_seconds": [
+                0.00016339322974090464,
+                0.00016397135459556011,
+                0.000164778645739716
+              ],
+              "host_median": 0.000177997375,
+              "host_seconds": [
+                0.0001789296875,
+                0.000177997375,
+                0.0001775208125
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l0-gate",
+            "k": 2048,
+            "layer": 0,
+            "m": 5632,
+            "op": "gate",
+            "step": 7
+          },
+          "baseline_gpu_us": 129.8984370805556,
+          "candidate_gpu_us": 166.4817709752242,
+          "ratio": 1.2816302852972874,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.0001298984370805556,
+              "gpu_seconds": [
+                0.00012984635486645857,
+                0.0001314687497142586,
+                0.0001298984370805556
+              ],
+              "host_median": 0.0001460130625,
+              "host_seconds": [
+                0.000144158875,
+                0.0001460130625,
+                0.0001462265625
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0001664817709752242,
+              "gpu_seconds": [
+                0.000164062500516593,
+                0.00019045572935283417,
+                0.0001664817709752242
+              ],
+              "host_median": 0.0001805390625,
+              "host_seconds": [
+                0.0001778150625,
+                0.0002041301875,
+                0.0001805390625
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l0-up",
+            "k": 2048,
+            "layer": 0,
+            "m": 5632,
+            "op": "up",
+            "step": 7
+          },
+          "baseline_gpu_us": 130.97656210447894,
+          "candidate_gpu_us": 166.08072928647744,
+          "ratio": 1.268018694474483,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00013097656210447894,
+              "gpu_seconds": [
+                0.00012949739539180882,
+                0.0001316770840276149,
+                0.00013097656210447894
+              ],
+              "host_median": 0.00014614325,
+              "host_seconds": [
+                0.000144559875,
+                0.0001463203125,
+                0.00014614325
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00016608072928647744,
+              "gpu_seconds": [
+                0.00018988281317433575,
+                0.00016608072928647744,
+                0.00016593750024185283
+              ],
+              "host_median": 0.0001815078125,
+              "host_seconds": [
+                0.0002056875,
+                0.000181033875,
+                0.0001815078125
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l11-gate",
+            "k": 2048,
+            "layer": 11,
+            "m": 5632,
+            "op": "gate",
+            "step": 7
+          },
+          "baseline_gpu_us": 128.05989626940573,
+          "candidate_gpu_us": 167.30468814785127,
+          "ratio": 1.3064565334012483,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00012805989626940573,
+              "gpu_seconds": [
+                0.00012805989626940573,
+                0.0001277421879422036,
+                0.00014936458410375053
+              ],
+              "host_median": 0.000142684875,
+              "host_seconds": [
+                0.000142684875,
+                0.0001423046875,
+                0.000163153625
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00016730468814785127,
+              "gpu_seconds": [
+                0.00019199218695575837,
+                0.00016730468814785127,
+                0.00016583593787800055
+              ],
+              "host_median": 0.000182796875,
+              "host_seconds": [
+                0.0002065989375,
+                0.000182796875,
+                0.000181552125
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l11-up",
+            "k": 2048,
+            "layer": 11,
+            "m": 5632,
+            "op": "up",
+            "step": 7
+          },
+          "baseline_gpu_us": 130.2968748859712,
+          "candidate_gpu_us": 165.81250019953586,
+          "ratio": 1.2725746518836007,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.0001302968748859712,
+              "gpu_seconds": [
+                0.0001302968748859712,
+                0.00013108333314448828,
+                0.00013012500039621955
+              ],
+              "host_median": 0.000146135375,
+              "host_seconds": [
+                0.0001457604375,
+                0.000146135375,
+                0.00014623175
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.00016581250019953586,
+              "gpu_seconds": [
+                0.00016581250019953586,
+                0.00016630208301648963,
+                0.00016532552126591327
+              ],
+              "host_median": 0.0001817916875,
+              "host_seconds": [
+                0.0001817916875,
+                0.0001829426875,
+                0.000179796875
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l21-gate",
+            "k": 2048,
+            "layer": 21,
+            "m": 5632,
+            "op": "gate",
+            "step": 7
+          },
+          "baseline_gpu_us": 128.92187532997923,
+          "candidate_gpu_us": 169.6770832495531,
+          "ratio": 1.3161232941675705,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00012892187532997923,
+              "gpu_seconds": [
+                0.0001287265622522682,
+                0.00012892187532997923,
+                0.00013070312525087502
+              ],
+              "host_median": 0.0001473698125,
+              "host_seconds": [
+                0.00014220575,
+                0.00014845575,
+                0.0001473698125
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0001696770832495531,
+              "gpu_seconds": [
+                0.0001696770832495531,
+                0.0001840078130044276,
+                0.0001656979166000383
+              ],
+              "host_median": 0.0002038359375,
+              "host_seconds": [
+                0.0002038359375,
+                0.0002050286875,
+                0.0001827318125
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": {
+            "id": "s7-l21-up",
+            "k": 2048,
+            "layer": 21,
+            "m": 5632,
+            "op": "up",
+            "step": 7
+          },
+          "baseline_gpu_us": 131.35156223142985,
+          "candidate_gpu_us": 165.9973959249328,
+          "ratio": 1.2637641540376965,
+          "observations": [
+            {
+              "candidate": false,
+              "gpu_median": 0.00013135156223142985,
+              "gpu_seconds": [
+                0.00013135156223142985,
+                0.00012921093730255961,
+                0.00014707031277794158
+              ],
+              "host_median": 0.00014756775,
+              "host_seconds": [
+                0.00014756775,
+                0.00014411975,
+                0.000159890625
+              ]
+            },
+            {
+              "candidate": true,
+              "gpu_median": 0.0001659973959249328,
+              "gpu_seconds": [
+                0.00016572656204516534,
+                0.00016718229107937077,
+                0.0001659973959249328
+              ],
+              "host_median": 0.000179895875,
+              "host_seconds": [
+                0.000179895875,
+                0.0001817578125,
+                0.0001796198125
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "decision": "stop; no full-model integration",
+    "full_model_replay_claim": false
+  },
+  "boundary_validation": {
+    "tests_passed": 4,
+    "tests_skipped": 0,
+    "concurrent_q4_words_both_modes": 600,
+    "fused_q4_words_both_modes": 600,
+    "concurrent_q6_reuse_words": 130,
+    "q6_reuse_encoded_projections": 64,
+    "output_guards_passed": true
+  },
+  "limits": [
+    "Only these pinned TinyLlama and derived Stories models on Apple M3 Max tested; no large-model/other-GPU claim.",
+    "Kernel sums are not whole-model time shares.",
+    "First concurrent candidate worker had slower setup and higher total time; all observations retained.",
+    "Fusion has kernel and CPU boundary checks only; no full-model integration after its clear regression.",
+    "Both candidates compared separately to the same pre-concurrent optimized baseline."
+  ]
+}
