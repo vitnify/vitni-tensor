@@ -1,4 +1,6 @@
 import os
+import ctypes
+import platform
 from pathlib import Path
 
 import numpy as np
@@ -202,6 +204,22 @@ def test_ambient_flush_to_zero_rejected():
         with pytest.raises(RuntimeError,match='environment'):
             vt.canonical_matmul(torch.ones(1,1),torch.ones(1,1))
     finally:torch.set_flush_denormal(False)
+
+
+def test_ambient_upward_rounding_rejected():
+    libc=ctypes.CDLL(None)
+    if not hasattr(libc,'fesetround'):pytest.skip('host does not expose fenv control')
+    original=libc.fegetround()
+    upward=0x00400000 if platform.machine().lower() in ('arm64','aarch64') else 0x0800
+    # Prepare all numerical inputs before altering the ambient rounding mode.
+    a,b=torch.ones(1,1),torch.ones(1,1)
+    x,w=torch.ones(256),raw_q4(256,1)
+    try:
+        if libc.fesetround(upward)!=0:pytest.skip('host does not support tested upward mode')
+        for function,arguments in [(vt.canonical_matmul,(a,b)),(vt.q4_k_linear,(x,w))]:
+            with pytest.raises(RuntimeError,match='environment'):function(*arguments)
+    finally:
+        assert libc.fesetround(original)==0
 
 
 def test_packaged_shaders_match_engine_sources():
