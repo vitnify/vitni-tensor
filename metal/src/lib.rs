@@ -213,9 +213,61 @@ fn write_buf(buf: &Buffer, data: &[f32]) {
     unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), buf.contents() as *mut f32, data.len()); }
 }
 
+/// Explicit per-instance controls for the existing kernels. No numerical regime change.
+#[derive(Clone, Debug)]
+pub struct MetalOptions {
+    pub q4k_variant: &'static str,
+    pub rms_variant: &'static str,
+    pub q4k_cooperative: bool,
+    pub rms_cooperative: bool,
+    pub q6k_cooperative: bool,
+    pub attention_cooperative: bool,
+    pub concurrent_dispatch: bool,
+}
+
+impl Default for MetalOptions {
+    fn default() -> Self {
+        Self { q4k_variant: "current", rms_variant: "current", q4k_cooperative: false,
+            rms_cooperative: false, q6k_cooperative: false, attention_cooperative: false,
+            concurrent_dispatch: false }
+    }
+}
+
+impl MetalOptions {
+    pub fn optimized() -> Self {
+        Self { q4k_variant: "metadata", rms_variant: "no_contract", q4k_cooperative: true,
+            rms_cooperative: true, q6k_cooperative: true, attention_cooperative: true,
+            concurrent_dispatch: true }
+    }
+
+    fn from_environment() -> Result<Self, MetalError> {
+        let enabled = |key| std::env::var(key).as_deref() == Ok("1");
+        let q4k_variant = match std::env::var("VITNI_METAL_Q4K_VARIANT").as_deref() {
+            Ok("metadata") => "metadata", Ok("no_contract") => "no_contract",
+            Ok("current") | Err(_) => "current",
+            _ => return Err(MetalError::Compile("unknown VITNI_METAL_Q4K_VARIANT".into())),
+        };
+        let rms_variant = match std::env::var("VITNI_METAL_RMS_VARIANT").as_deref() {
+            Ok("no_contract") => "no_contract", Ok("current") | Err(_) => "current",
+            _ => return Err(MetalError::Compile("unknown VITNI_METAL_RMS_VARIANT".into())),
+        };
+        Ok(Self { q4k_variant, rms_variant,
+            q4k_cooperative: enabled("VITNI_METAL_Q4K_COOPERATIVE"),
+            rms_cooperative: enabled("VITNI_METAL_RMS_COOPERATIVE"),
+            q6k_cooperative: enabled("VITNI_METAL_Q6K_COOPERATIVE"),
+            attention_cooperative: enabled("VITNI_METAL_ATTENTION_COOPERATIVE"),
+            concurrent_dispatch: enabled("VITNI_METAL_CONCURRENT_DISPATCH") })
+    }
+}
+
 impl MetalForward {
     pub fn new(cfg: &Config, w: &QuantizedWeights) -> Result<MetalForward, MetalError> {
-        let concurrent_dispatch = std::env::var("VITNI_METAL_CONCURRENT_DISPATCH").as_deref() == Ok("1");
+        Self::new_with_options(cfg, w, &MetalOptions::from_environment()?)
+    }
+
+    /// Construct a resident engine without changing or sampling optimization env vars.
+    pub fn new_with_options(cfg: &Config, w: &QuantizedWeights, options: &MetalOptions) -> Result<MetalForward, MetalError> {
+        let concurrent_dispatch = options.concurrent_dispatch;
         if concurrent_dispatch && std::env::var("VITNI_METAL_PROFILE").as_deref() == Ok("dispatch") {
             return Err(MetalError::Compile("concurrent dispatch cannot use split-pass profiling".into()));
         }
@@ -233,11 +285,11 @@ impl MetalForward {
         // sizes (TinyLlama agreed by luck; Mistral-7B did not). Keeping weights
         // quantized also avoids the f32 memory blow-up.
         // Opt-in contraction control; current remains the default.
-        let q4k_variant = match std::env::var("VITNI_METAL_Q4K_VARIANT").as_deref() {
-            Ok("no_contract") => "no_contract",
-            Ok("metadata") => "metadata",
-            Ok("current") | Err(_) => "current",
-            Ok(_) => return Err(MetalError::Compile("unknown VITNI_METAL_Q4K_VARIANT".into())),
+        let q4k_variant = match options.q4k_variant {
+            "no_contract" => "no_contract",
+            "metadata" => "metadata",
+            "current" => "current",
+            _ => return Err(MetalError::Compile("unknown Q4_K variant".into())),
         };
         let cooperative_source = match q4k_variant {
             "no_contract" | "metadata" => format!("#define VITNI_Q4K_NO_CONTRACT 1\n{Q4K}"),
@@ -263,12 +315,12 @@ impl MetalForward {
         let n_layers = cfg.n_layers;
         let seq = cfg.seq_len;
 
-        let rms_variant=match std::env::var("VITNI_METAL_RMS_VARIANT").as_deref() {
-            Ok("no_contract") => "no_contract",
-            Ok("current") | Err(_) => "current",
-            Ok(_) => return Err(MetalError::Compile("unknown VITNI_METAL_RMS_VARIANT".into())),
+        let rms_variant=match options.rms_variant {
+            "no_contract" => "no_contract",
+            "current" => "current",
+            _ => return Err(MetalError::Compile("unknown RMS variant".into())),
         };
-        let requested_q6k = std::env::var("VITNI_METAL_Q6K_COOPERATIVE").as_deref() == Ok("1");
+        let requested_q6k = options.q6k_cooperative;
         let (pl_q6k_cooperative, pl_q6k_cooperative_acc) = if requested_q6k {
             (Some(pipeline(&device, Q6K_INT, "q6k_integer_dot_cooperative")?),
              Some(pipeline(&device, Q6K_INT, "q6k_integer_dot_cooperative_acc")?))
@@ -277,7 +329,7 @@ impl MetalForward {
             && pl_q6k_cooperative.as_ref().unwrap().thread_execution_width() == 32
             && pl_q6k_cooperative_acc.as_ref().unwrap().thread_execution_width() == 32;
         let (pl_attn_cooperative, attention_cooperative) =
-            if std::env::var("VITNI_METAL_ATTENTION_COOPERATIVE").as_deref() == Ok("1") {
+            if options.attention_cooperative {
                 let pl = pipeline(&device, FWD, "attention_cooperative")?;
                 let supported = pl.max_total_threads_per_threadgroup() >= 64
                     && (1..=8192).contains(&head_size) && cfg.n_heads > 0 && cfg.kv_mul() > 0;
@@ -294,7 +346,7 @@ impl MetalForward {
             pl_q4k_linear_acc: pipeline(&device, Q4K, "q4k_linear_acc")?,
             pl_q4k_cooperative: pipeline(&device, &cooperative_source, if q4k_variant=="metadata" {"q4k_linear_metadata"} else {"q4k_linear_cooperative"})?,
             pl_q4k_cooperative_acc: pipeline(&device, &cooperative_source, if q4k_variant=="metadata" {"q4k_linear_metadata_acc"} else {"q4k_linear_cooperative_acc"})?,
-            q4k_cooperative: q4k_variant != "current" || std::env::var("VITNI_METAL_Q4K_COOPERATIVE").as_deref() == Ok("1"),
+            q4k_cooperative: q4k_variant != "current" || options.q4k_cooperative,
             q4k_variant,
             #[cfg(feature = "profiling")]
             profiler: profiling::Profiler::from_environment(&device).map_err(MetalError::Compile)?,
@@ -308,7 +360,7 @@ impl MetalForward {
             // The existing RMS kernel uses a single canonical chunk. Keep this
             // experiment inside that CPU-compatible width; wider models retain
             // the existing path rather than gaining a new arithmetic claim.
-            rms_cooperative: (rms_variant=="no_contract" || std::env::var("VITNI_METAL_RMS_COOPERATIVE").as_deref() == Ok("1"))
+            rms_cooperative: (rms_variant=="no_contract" || options.rms_cooperative)
                 && (1..=8192).contains(&dim),
             pl_silu_mul: pipeline(&device, FWD, "silu_mul")?,
             pl_add: pipeline(&device, FWD, "add_inplace")?,

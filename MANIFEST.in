@@ -3,6 +3,8 @@ recursive-include src *.rs
 recursive-include examples *.rs
 recursive-include bindings/torch/native *.toml Cargo.lock *.rs
 recursive-include kernels *.metal
+include metal/Cargo.toml
+recursive-include metal/src *.rs
 recursive-include python *.py *.md *.metal
 prune bindings/torch/native/target
 prune build

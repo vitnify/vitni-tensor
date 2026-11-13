@@ -50,7 +50,23 @@ jobs:
           PY
       - name: Install the built wheel
         run: python -m pip install --no-deps dist/*.whl
+      - name: Cache full-model test checkpoint
+        id: gguf
+        uses: actions/cache@v4
+        with:
+          path: ci-models/tinyllama-1.1b-Q4_K_M.gguf
+          key: gguf-tinyllama-1.1b-chat-v1.0-q4km
+      - name: Fetch full-model test checkpoint
+        if: steps.gguf.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ci-models
+          curl -fL --retry 3 -o ci-models/tinyllama-1.1b-Q4_K_M.gguf \
+            https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
       - name: Test installed package
+        env:
+          VITNI_REQUIRE_FULL_MODEL: '1'
+          VITNI_FULL_MODEL_CPU_ONLY: '1'
+          VITNI_FULL_MODEL_GGUF: ${{ github.workspace }}/ci-models/tinyllama-1.1b-Q4_K_M.gguf
         run: python -m pytest -q python/tests
       - uses: actions/upload-artifact@v4
         with:

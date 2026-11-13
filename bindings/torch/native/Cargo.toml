@@ -7,9 +7,17 @@ publish = false
 [workspace]
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+metal = ["dep:vitni-tensor-metal", "dep:objc"]
 
 [dependencies]
 vitni-tensor = { path = "../../.." }
 # Pin the core's math dependency in the standalone binding build.
 libm = "=0.2.16"
+blake3 = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+vitni-tensor-metal = { path = "../../../metal", optional = true }
+objc = { version = "0.2", optional = true }

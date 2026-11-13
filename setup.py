@@ -31,11 +31,16 @@ class BuildPy(build_py):
         flags += ["--remap-path-prefix", f"{ROOT}=vitni-tensor"]
         if environment.get("CARGO_HOME"):
             flags += ["--remap-path-prefix", f"{Path(environment['CARGO_HOME']).resolve()}=cargo-registry"]
+        sysroot = subprocess.check_output([environment.get("RUSTC", "rustc"), "--print", "sysroot"],
+                                          env=environment, text=True).strip()
+        flags += ["--remap-path-prefix", f"{sysroot}=rust-sysroot"]
         if sys.platform == "darwin":
             flags += ["-C", "link-arg=-Wl,-install_name,@rpath/libvitni_torch_native.dylib"]
         environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
-        subprocess.run(["cargo", "build", "--release", "--locked", "--manifest-path",
-                        str(ROOT / "bindings/torch/native/Cargo.toml")],
+        command=["cargo", "build", "--release", "--lib", "--locked", "--manifest-path",
+                 str(ROOT / "bindings/torch/native/Cargo.toml")]
+        if sys.platform == "darwin":command += ["--features", "metal"]
+        subprocess.run(command,
                        cwd=ROOT, env=environment, check=True)
         name = ("vitni_torch_native.dll" if sys.platform=="win32" else
                 "libvitni_torch_native.dylib" if sys.platform=="darwin" else

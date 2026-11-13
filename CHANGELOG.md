@@ -3,6 +3,22 @@
 All notable changes to `vitni-tensor` are documented here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [0.3.3] — 2026-11-13
+
+- Metal SiLU/SwiGLU: preserve CPU signed zero when exp overflows, normalize
+  large finite divisors, and round subnormal activation/products exactly.
+  CPU arithmetic and numerical-regime anchors are unchanged. Validation:
+  [SiLU research report](docs/research/silu-overflow-2026-11-13.md).
+- Opt-in eager `VitniModel` module over resident CPU/optimized-Metal engine
+  instances, with full-logit tensors and the existing generation/receipt driver.
+- Explicit per-instance `MetalOptions`; existing environment-based construction
+  retains its backend-selection behavior. CPU arithmetic and numerical-regime
+  anchors are unchanged.
+- Lifecycle, reset, exact replay and native/PyTorch runtime comparisons. See
+  [the full-model guide](python/FULL_MODEL.md). Python preview 0.1.0a2 is
+  distributed through the GitHub release and tagged source, with explicit opt-in
+  construction. It is not published to PyPI.
+
 ## [0.3.2] — 2026-11-13
 
 Opt-in backend/package additions. The core's default numerical behavior and
