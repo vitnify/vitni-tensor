@@ -1,5 +1,10 @@
 # vitni-torch (experimental, opt-in)
 
+This research checkout also includes a resident full-model `VitniModel`
+wrapper. See [the full-model guide](FULL_MODEL.md) for its distinct API,
+CPU/Metal execution, measurements and limits. This addition is not part of
+the published 0.1.0a1 preview; the research package is versioned 0.1.0a2.
+
 Explicit CPU and Apple MPS operators using Vitni's arithmetic contract:
 
 - `canonical_matmul(a, b)`: contiguous rank-2 float32 matrices.

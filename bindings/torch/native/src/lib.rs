@@ -2,6 +2,8 @@
 use std::{hint::black_box, panic::catch_unwind, slice};
 use vitni_tensor::{ops::quant::linear_q4_k_fused, Shape, Storage, Tensor};
 
+pub mod full_model;
+
 #[no_mangle]
 pub extern "C" fn vitni_torch_abi_version() -> u32 {
     1

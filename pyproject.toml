@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vitni-torch"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "Opt-in canonical CPU and Metal inference operators for PyTorch"
 readme = "python/README.md"
 requires-python = ">=3.10"

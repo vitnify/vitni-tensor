@@ -3,6 +3,16 @@
 All notable changes to `vitni-tensor` are documented here.
 This project follows [Semantic Versioning](https://semver.org).
 
+## [Unreleased] — full-model PyTorch research
+
+- Opt-in eager `VitniModel` module over resident CPU/optimized-Metal engine
+  instances, with full-logit tensors and the existing generation/receipt driver.
+- Explicit per-instance `MetalOptions`; existing environment-based construction
+  retains its behavior. No kernel or numerical-regime change.
+- Lifecycle, reset, exact replay and native/PyTorch runtime comparisons. See
+  [the research guide](python/FULL_MODEL.md). Python package version 0.1.0a2
+  remains unmerged and unpublished on the research branch.
+
 ## [0.3.2] — 2026-11-13
 
 Opt-in backend/package additions. The core's default numerical behavior and
