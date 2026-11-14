@@ -1,0 +1,19 @@
+[llmzip] arithmetic coder round-trips
+  vocab=2       n=4000  ok   3479 B,   6.96 bits/sym (entropy   6.96, overhead +0.01%)
+  vocab=7       n=3000  ok   4527 B,  12.07 bits/sym (entropy  12.07, overhead +0.02%)
+  vocab=256     n=2000  ok   3521 B,  14.08 bits/sym (entropy  14.09, overhead -0.02%)
+  vocab=50257   n=400   ok   839 B,  16.78 bits/sym (entropy  16.77, overhead +0.08%)
+  vocab=151936  n=120   ok   238 B,  15.87 bits/sym (entropy  15.87, overhead -0.00%)
+[llmzip] adaptive rank coder round-trips
+  0-heavy (realistic)              n=4000  ok   2091 B,   4.18 bits/rank  (counts halved)
+  uniform over vocab (worst case)  n=3000  ok   5987 B,  15.97 bits/rank  (counts halved)
+  large vocab, mixed               n=2500  ok   3079 B,   9.85 bits/rank  (counts halved)
+  single symbol                    n=1     ok   2 B,  16.00 bits/rank
+[llmzip] CDF invariants
+  ok
+[llmzip] varint round-trip
+  ok
+[llmzip] header round-trip
+  ok (header 45 B)
+
+[llmzip] selftest: ALL PASS

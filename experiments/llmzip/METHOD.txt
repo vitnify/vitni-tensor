@@ -1,0 +1,116 @@
+Independent workload validation — frozen protocol, November 14, 2026
+
+Question
+Can the existing Vitni engine make Andreas Lindeman's actual arithmetic-coded
+LLM archives recover exactly when encoder and decoder use different compute
+devices, where the ordinary backend fails? What does it cost?
+
+Independent need
+Owner: Andreas Lindeman, GitHub andreasviner.
+Project: https://github.com/andreasviner/llm-compression
+Owner's explanation: https://andreaslindeman.com/projects/llm-compression/
+He explicitly describes device-dependent model rounding desynchronizing the
+arithmetic decoder. His existing Predictor avoids batched teacher forcing for
+the same reason. His published model comparisons already include SmolLM2-135M.
+This is a public hobby project. Its last public source commit was August 16,
+2026. No new conversation with the owner has occurred, and no interest in Vitni,
+acceptance of its cost, adoption, urgency or commercial demand is inferred.
+
+Preserved workload
+Upstream commit: 6e6cd1bccfa99584b8f112957c5a74f3f29b17a1.
+llmzip.py Git blob: 70813265196c70bf1dee5c3793aa586181de9810.
+The extracted file was verified against GitHub's tree object. No source edits.
+Original upstream selftest passes.
+Original arithmetic encoder/decoder, header framing, tokenizer round-trip gate,
+float64 probability construction, 30-bit integer CDF, temperature=1 and no
+online mixing. MODE_RAW/LZMA fallback is rejected, not counted as success.
+The original decoder's integrity check runs before any output is accepted.
+An existing injected-Predictor function argument permits explicit target-device
+testing. This differs from the original CLI, which pins the archived device.
+
+Small integration surface
+adapters.py subclasses upstream Predictor. HF uses the original implementation
+with offline pinned model loading. The same-GGUF Torch control uses the official
+Transformers GGUF loader; omitted tied classifier aliases embedding weights.
+Vitni uses a text/binary subprocess adapter calling the unchanged Rust forward
+engine. Upstream token stepping and sliding-context policy are inherited.
+The native worker resets at the same boundaries and executes all context tokens
+sequentially. No saved logits, supplied token streams, teacher-forcing batch
+substitution or tolerance-based comparison is used during decoding.
+codec_worker.py wraps original CDF construction only to hash the returned CDF
+and raw float32 logits. It returns the original CDF untouched.
+
+Engine and model
+Existing Vitni v0.3.3 arithmetic, optimized Metal mode. The checkout is on
+research/metal-batched-prefill-2026-11-13 at b43ba153c391364c224ef364adc8a6f84c9d1a17.
+Its only changes relative to v0.3.3 in the relevant engine paths are the gated
+research-prefill module and fields. That feature is disabled. The build enables
+only default features; see build-features.txt. No engine files changed here.
+Official HF weights: HuggingFaceTB/SmolLM2-135M, revision
+93efa2f097d58c2a74874c7e644dbc9b0cee75a2.
+Official Q8_0 GGUF: ggml-org/SmolLM2-135M-GGUF, revision
+1076b85d135017971845b19b8d07df1479155988.
+The GGUF's .src_sha points to that same original HF revision.
+GGUF SHA256: 813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455.
+GGUF size: 144,810,560 bytes. Model storage/transfer is additional to archive
+size. Both endpoints must have the matching model and tokenizer.
+
+Controls
+1. Original HF weights with standard PyTorch FP32 CPU versus physical MPS.
+2. Identical Q8_0 GGUF dequantized to FP32 with standard PyTorch CPU/MPS.
+3. Identical Q8_0 GGUF with Vitni CPU/optimized Metal.
+The second control separates quantization changes from numerical-engine value.
+Ten Torch CPU threads; MPS fallback disabled. Metal initialization must succeed.
+Vitni's CPU path is the existing default reference implementation; these tests
+do not claim it is the fastest possible deterministic CPU implementation.
+
+Inputs and matrix
+Fixtures and selection rules were fixed in PLAN.json before archive results.
+Full upstream prose_en.txt (5,130 bytes), first 512 Unicode characters from
+code_python.txt (512 bytes), and from prose_no.txt (520 bytes).
+Window=256, keep=64 for every provider. These are supported upstream options;
+the upstream default window=1024 is not tested. This affects compression ratio.
+For each provider/input, CPU and GPU independently encode. Each archive is
+decoded in two fresh processes, on CPU and GPU: 18 encodes and 36 decodes.
+No input is selected or dropped based on success. Same-device controls must
+pass. Native cross-device integrity failures are retained as actual outcomes.
+Decoder children receive only archive and model paths, not plaintext, expected
+tokens or expected logits/CDFs. The parent's full-byte comparison occurs after
+the child exits and supplements upstream's stored 8-byte SHA256 prefix.
+The target processes have normal local filesystem access; this is an input
+separation test, not a malicious-decoder sandbox or cryptographic execution proof.
+
+Measurements
+All trials are serial, with fresh models and inference caches. OS filesystem
+caches are not flushed. work_seconds includes
+tokenization, inference, probability/CDF construction, hashing instrumentation,
+coding and output. outer_seconds also includes imports, loading and teardown.
+forward_seconds isolates completed model calls; both MPS synchronization and
+Metal completion are included. Neither end-to-end timing includes initial model
+download or compilation. These are one-run functional measurements per case,
+not a repeated low-noise performance benchmark or confidence interval. The
+desktop remained in use with background CPU/graphics activity. Ratios are
+observed workflow costs, not a controlled performance claim.
+One logit hash covers every vocabulary word at one coded position (49,152
+float32 words); every original integer CDF entry is also hashed. All positions
+are compared, including after context rebuilds. No selected-token-only check.
+Complete archive sizes include headers. Payload sizes are reported separately.
+Original CLI compression verifies by decoding; that operation adds the measured
+decode cost rather than being hidden in the encode-only time.
+
+Scope and claims
+Physical devices: Apple M3 Max CPU and its 30-core GPU, 36 GB memory, one Mac.
+This establishes only the measured CPU/Metal pairing and pinned software/profile.
+It does not establish CUDA, AMD, x86, separate machines, other NumPy/libm builds,
+all models, long documents, or permanent archival stability. The upstream CDF
+still uses CPU NumPy float64 exp/reductions; its cross-platform bit-exactness is
+not separately established. The model's exact logits are necessary but not a
+complete universal codec-portability specification.
+Vitni defines a new archive numerical profile with the GGUF hash. CPU and Metal
+share that identifier; the actual physical backend is recorded in run manifests.
+It changes model numerics and requires re-encoding. Old HF archives cannot be
+silently migrated by changing the decoder. A profile mismatch is rejected.
+This tests functional utility, not new invention, independent replication,
+maintainer acceptance, a standard archive format or a proven business market.
+No maintainers contacted, public posts made, engine changes, main-branch edits,
+deployments or paid compute are part of this validation.

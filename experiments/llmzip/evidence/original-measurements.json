@@ -1,0 +1,4217 @@
+{
+  "cases": [
+    {
+      "provider": "vitni",
+      "fixture": "prose_full",
+      "input_bytes": 5130,
+      "input_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+      "encodes": {
+        "cpu": {
+          "operation": "encode",
+          "provider": "vitni",
+          "device": "cpu",
+          "input": "fixtures/prose_full.txt",
+          "output": "runs/vitni-prose_full-from-cpu.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+          "load_seconds": 0.15150866599287838,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "native_ready": {
+            "ready": true,
+            "backend": "cpu",
+            "vocab": 49152,
+            "dim": 576,
+            "layers": 30,
+            "context": 256,
+            "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+          },
+          "stats": {
+            "mode": 0,
+            "n_tokens": 1362,
+            "model_bits": 5340.843214380733,
+            "header_bytes": 160,
+            "payload_bytes": 668
+          },
+          "archive_bytes": 828,
+          "archive_sha256": "83ae01f43d6d723164ffbab63b8b2a72a9ac3fd1317424553587005a4fd5c426",
+          "payload_sha256": "b2d62cf5d51cb9857c0417739e2a391c5908115dee2f4f94fa041b3fac7cc6f8",
+          "work_seconds": 115.88258604198927,
+          "forward_seconds": 114.7667430290001,
+          "forward_positions": 1741,
+          "cache_resets": 7,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 1362,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "082bf9d8fdda1eef",
+            "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "vitni-canonical-r2",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 1362,
+          "trace_path": "runs/vitni-prose_full-from-cpu-encode.trace.json",
+          "process_seconds": 131.1770862090052,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "vitni",
+            "cpu",
+            "fixtures/prose_full.txt",
+            "runs/vitni-prose_full-from-cpu.llmz",
+            "runs/vitni-prose_full-from-cpu-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 131.62802795899916
+        },
+        "metal": {
+          "operation": "encode",
+          "provider": "vitni",
+          "device": "metal",
+          "input": "fixtures/prose_full.txt",
+          "output": "runs/vitni-prose_full-from-metal.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+          "load_seconds": 0.19780641599209048,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "native_ready": {
+            "ready": true,
+            "backend": "metal",
+            "vocab": 49152,
+            "dim": 576,
+            "layers": 30,
+            "context": 256,
+            "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+          },
+          "stats": {
+            "mode": 0,
+            "n_tokens": 1362,
+            "model_bits": 5340.843214380733,
+            "header_bytes": 160,
+            "payload_bytes": 668
+          },
+          "archive_bytes": 828,
+          "archive_sha256": "83ae01f43d6d723164ffbab63b8b2a72a9ac3fd1317424553587005a4fd5c426",
+          "payload_sha256": "b2d62cf5d51cb9857c0417739e2a391c5908115dee2f4f94fa041b3fac7cc6f8",
+          "work_seconds": 38.09155945800012,
+          "forward_seconds": 37.109685667000036,
+          "forward_positions": 1741,
+          "cache_resets": 7,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 1362,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "082bf9d8fdda1eef",
+            "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "vitni-canonical-r2",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 1362,
+          "trace_path": "runs/vitni-prose_full-from-metal-encode.trace.json",
+          "process_seconds": 42.12633724999614,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "vitni",
+            "metal",
+            "fixtures/prose_full.txt",
+            "runs/vitni-prose_full-from-metal.llmz",
+            "runs/vitni-prose_full-from-metal-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 42.45424658400589
+        }
+      },
+      "decodes": [
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "cpu",
+            "input": "runs/vitni-prose_full-from-cpu.llmz",
+            "output": "runs/vitni-prose_full-from-cpu-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "83ae01f43d6d723164ffbab63b8b2a72a9ac3fd1317424553587005a4fd5c426",
+            "load_seconds": 0.1449866250040941,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "cpu",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 5130,
+            "recovered_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+            "work_seconds": 115.6080040000088,
+            "forward_seconds": 114.49172790699986,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 1362,
+            "trace_path": "runs/vitni-prose_full-from-cpu-to-cpu.trace.json",
+            "process_seconds": 119.8504616249993,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "cpu",
+              "runs/vitni-prose_full-from-cpu.llmz",
+              "runs/vitni-prose_full-from-cpu-to-cpu.recovered",
+              "runs/vitni-prose_full-from-cpu-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 120.1659486250137,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "metal",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "metal",
+            "input": "runs/vitni-prose_full-from-cpu.llmz",
+            "output": "runs/vitni-prose_full-from-cpu-to-metal.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "83ae01f43d6d723164ffbab63b8b2a72a9ac3fd1317424553587005a4fd5c426",
+            "load_seconds": 0.20998454198706895,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "metal",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 5130,
+            "recovered_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+            "work_seconds": 38.103867541009095,
+            "forward_seconds": 37.14437206200004,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 1362,
+            "trace_path": "runs/vitni-prose_full-from-cpu-to-metal.trace.json",
+            "process_seconds": 42.2047143340169,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "metal",
+              "runs/vitni-prose_full-from-cpu.llmz",
+              "runs/vitni-prose_full-from-cpu-to-metal.recovered",
+              "runs/vitni-prose_full-from-cpu-to-metal.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 42.543708874989534,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "metal",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "cpu",
+            "input": "runs/vitni-prose_full-from-metal.llmz",
+            "output": "runs/vitni-prose_full-from-metal-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "83ae01f43d6d723164ffbab63b8b2a72a9ac3fd1317424553587005a4fd5c426",
+            "load_seconds": 0.14350008298060857,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "cpu",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 5130,
+            "recovered_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+            "work_seconds": 114.55141112499405,
+            "forward_seconds": 113.47226137199995,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 1362,
+            "trace_path": "runs/vitni-prose_full-from-metal-to-cpu.trace.json",
+            "process_seconds": 118.50090162499691,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "cpu",
+              "runs/vitni-prose_full-from-metal.llmz",
+              "runs/vitni-prose_full-from-metal-to-cpu.recovered",
+              "runs/vitni-prose_full-from-metal-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 118.81038629199611,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "metal",
+          "decoding_device": "metal",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "metal",
+            "input": "runs/vitni-prose_full-from-metal.llmz",
+            "output": "runs/vitni-prose_full-from-metal-to-metal.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "83ae01f43d6d723164ffbab63b8b2a72a9ac3fd1317424553587005a4fd5c426",
+            "load_seconds": 0.19809720900957473,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "metal",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 5130,
+            "recovered_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+            "work_seconds": 38.121202207985334,
+            "forward_seconds": 37.13612072299995,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 1362,
+            "trace_path": "runs/vitni-prose_full-from-metal-to-metal.trace.json",
+            "process_seconds": 42.35851979200379,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "metal",
+              "runs/vitni-prose_full-from-metal.llmz",
+              "runs/vitni-prose_full-from-metal-to-metal.recovered",
+              "runs/vitni-prose_full-from-metal-to-metal.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 42.68358491701656,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        }
+      ],
+      "cpu_gpu_encoding_trace": {
+        "left_rows": 1362,
+        "right_rows": 1362,
+        "logits_sha256": {
+          "different_rows": 0,
+          "first_difference": null
+        },
+        "cdf_sha256": {
+          "different_rows": 0,
+          "first_difference": null
+        }
+      },
+      "identical_archive": true,
+      "identical_payload": true
+    },
+    {
+      "provider": "vitni",
+      "fixture": "code_prefix",
+      "input_bytes": 512,
+      "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+      "encodes": {
+        "cpu": {
+          "operation": "encode",
+          "provider": "vitni",
+          "device": "cpu",
+          "input": "fixtures/code_prefix.txt",
+          "output": "runs/vitni-code_prefix-from-cpu.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+          "load_seconds": 0.14472025001305155,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "native_ready": {
+            "ready": true,
+            "backend": "cpu",
+            "vocab": 49152,
+            "dim": 576,
+            "layers": 30,
+            "context": 256,
+            "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+          },
+          "stats": {
+            "mode": 0,
+            "n_tokens": 129,
+            "model_bits": 358.96436628122376,
+            "header_bytes": 160,
+            "payload_bytes": 45
+          },
+          "archive_bytes": 205,
+          "archive_sha256": "41bbbfc50081c340d6fd87d35548665fc1a846fa2a901037f5e76eeced88a543",
+          "payload_sha256": "7d7d6f356e4fbc14eb25fd1cc740de41eb410f7c5a3e00968890e3f4769efdf5",
+          "work_seconds": 8.38735233299667,
+          "forward_seconds": 8.284177874000003,
+          "forward_positions": 130,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 129,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "acb0d7663ba44624",
+            "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "vitni-canonical-r2",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 129,
+          "trace_path": "runs/vitni-code_prefix-from-cpu-encode.trace.json",
+          "process_seconds": 12.195988124993164,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "vitni",
+            "cpu",
+            "fixtures/code_prefix.txt",
+            "runs/vitni-code_prefix-from-cpu.llmz",
+            "runs/vitni-code_prefix-from-cpu-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 12.505232041992713
+        },
+        "metal": {
+          "operation": "encode",
+          "provider": "vitni",
+          "device": "metal",
+          "input": "fixtures/code_prefix.txt",
+          "output": "runs/vitni-code_prefix-from-metal.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+          "load_seconds": 0.19377474999055266,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "native_ready": {
+            "ready": true,
+            "backend": "metal",
+            "vocab": 49152,
+            "dim": 576,
+            "layers": 30,
+            "context": 256,
+            "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+          },
+          "stats": {
+            "mode": 0,
+            "n_tokens": 129,
+            "model_bits": 358.96436628122376,
+            "header_bytes": 160,
+            "payload_bytes": 45
+          },
+          "archive_bytes": 205,
+          "archive_sha256": "41bbbfc50081c340d6fd87d35548665fc1a846fa2a901037f5e76eeced88a543",
+          "payload_sha256": "7d7d6f356e4fbc14eb25fd1cc740de41eb410f7c5a3e00968890e3f4769efdf5",
+          "work_seconds": 2.8373504170158412,
+          "forward_seconds": 2.7411503770000007,
+          "forward_positions": 130,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 129,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "acb0d7663ba44624",
+            "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "vitni-canonical-r2",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 129,
+          "trace_path": "runs/vitni-code_prefix-from-metal-encode.trace.json",
+          "process_seconds": 6.247468624991598,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "vitni",
+            "metal",
+            "fixtures/code_prefix.txt",
+            "runs/vitni-code_prefix-from-metal.llmz",
+            "runs/vitni-code_prefix-from-metal-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 6.590472790994681
+        }
+      },
+      "decodes": [
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "cpu",
+            "input": "runs/vitni-code_prefix-from-cpu.llmz",
+            "output": "runs/vitni-code_prefix-from-cpu-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "41bbbfc50081c340d6fd87d35548665fc1a846fa2a901037f5e76eeced88a543",
+            "load_seconds": 0.13410458399448544,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "cpu",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 512,
+            "recovered_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+            "work_seconds": 8.388435291999485,
+            "forward_seconds": 8.285793461000003,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 129,
+            "trace_path": "runs/vitni-code_prefix-from-cpu-to-cpu.trace.json",
+            "process_seconds": 11.77464200000395,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "cpu",
+              "runs/vitni-code_prefix-from-cpu.llmz",
+              "runs/vitni-code_prefix-from-cpu-to-cpu.recovered",
+              "runs/vitni-code_prefix-from-cpu-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 12.09966229199199,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "metal",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "metal",
+            "input": "runs/vitni-code_prefix-from-cpu.llmz",
+            "output": "runs/vitni-code_prefix-from-cpu-to-metal.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "41bbbfc50081c340d6fd87d35548665fc1a846fa2a901037f5e76eeced88a543",
+            "load_seconds": 0.19509412499610335,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "metal",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 512,
+            "recovered_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+            "work_seconds": 2.8473276250006165,
+            "forward_seconds": 2.758238666,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 129,
+            "trace_path": "runs/vitni-code_prefix-from-cpu-to-metal.trace.json",
+            "process_seconds": 6.269226125004934,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "metal",
+              "runs/vitni-code_prefix-from-cpu.llmz",
+              "runs/vitni-code_prefix-from-cpu-to-metal.recovered",
+              "runs/vitni-code_prefix-from-cpu-to-metal.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 6.5996915829891805,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "metal",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "cpu",
+            "input": "runs/vitni-code_prefix-from-metal.llmz",
+            "output": "runs/vitni-code_prefix-from-metal-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "41bbbfc50081c340d6fd87d35548665fc1a846fa2a901037f5e76eeced88a543",
+            "load_seconds": 0.13478562500677072,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "cpu",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 512,
+            "recovered_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+            "work_seconds": 8.408190999994986,
+            "forward_seconds": 8.303463497000001,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 129,
+            "trace_path": "runs/vitni-code_prefix-from-metal-to-cpu.trace.json",
+            "process_seconds": 11.491826334007783,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "cpu",
+              "runs/vitni-code_prefix-from-metal.llmz",
+              "runs/vitni-code_prefix-from-metal-to-cpu.recovered",
+              "runs/vitni-code_prefix-from-metal-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 11.832990333001362,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "metal",
+          "decoding_device": "metal",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "metal",
+            "input": "runs/vitni-code_prefix-from-metal.llmz",
+            "output": "runs/vitni-code_prefix-from-metal-to-metal.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "41bbbfc50081c340d6fd87d35548665fc1a846fa2a901037f5e76eeced88a543",
+            "load_seconds": 0.19305883400375023,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "metal",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 512,
+            "recovered_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+            "work_seconds": 2.846328125015134,
+            "forward_seconds": 2.7555224600000003,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 129,
+            "trace_path": "runs/vitni-code_prefix-from-metal-to-metal.trace.json",
+            "process_seconds": 6.234308084007353,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "metal",
+              "runs/vitni-code_prefix-from-metal.llmz",
+              "runs/vitni-code_prefix-from-metal-to-metal.recovered",
+              "runs/vitni-code_prefix-from-metal-to-metal.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 6.56110008401447,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        }
+      ],
+      "cpu_gpu_encoding_trace": {
+        "left_rows": 129,
+        "right_rows": 129,
+        "logits_sha256": {
+          "different_rows": 0,
+          "first_difference": null
+        },
+        "cdf_sha256": {
+          "different_rows": 0,
+          "first_difference": null
+        }
+      },
+      "identical_archive": true,
+      "identical_payload": true
+    },
+    {
+      "provider": "vitni",
+      "fixture": "norwegian_prefix",
+      "input_bytes": 520,
+      "input_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+      "encodes": {
+        "cpu": {
+          "operation": "encode",
+          "provider": "vitni",
+          "device": "cpu",
+          "input": "fixtures/norwegian_prefix.txt",
+          "output": "runs/vitni-norwegian_prefix-from-cpu.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+          "load_seconds": 0.13464574998943135,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "native_ready": {
+            "ready": true,
+            "backend": "cpu",
+            "vocab": 49152,
+            "dim": 576,
+            "layers": 30,
+            "context": 256,
+            "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+          },
+          "stats": {
+            "mode": 0,
+            "n_tokens": 198,
+            "model_bits": 1316.0389501625782,
+            "header_bytes": 160,
+            "payload_bytes": 164
+          },
+          "archive_bytes": 324,
+          "archive_sha256": "c2ad83c8ba39975b4102b79ea3344d5530187149f9b9fedc78373666c9859fef",
+          "payload_sha256": "651a015b2bd21451eb8383599966084a4ead3d314dbd8389807fc857fe0fa2ad",
+          "work_seconds": 13.040425874991342,
+          "forward_seconds": 12.880122742999992,
+          "forward_positions": 199,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 198,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "9bc9fbe5f8dc899a",
+            "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "vitni-canonical-r2",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 198,
+          "trace_path": "runs/vitni-norwegian_prefix-from-cpu-encode.trace.json",
+          "process_seconds": 16.405153125000652,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "vitni",
+            "cpu",
+            "fixtures/norwegian_prefix.txt",
+            "runs/vitni-norwegian_prefix-from-cpu.llmz",
+            "runs/vitni-norwegian_prefix-from-cpu-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 16.756211084022652
+        },
+        "metal": {
+          "operation": "encode",
+          "provider": "vitni",
+          "device": "metal",
+          "input": "fixtures/norwegian_prefix.txt",
+          "output": "runs/vitni-norwegian_prefix-from-metal.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+          "load_seconds": 0.19250195799395442,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "native_ready": {
+            "ready": true,
+            "backend": "metal",
+            "vocab": 49152,
+            "dim": 576,
+            "layers": 30,
+            "context": 256,
+            "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+          },
+          "stats": {
+            "mode": 0,
+            "n_tokens": 198,
+            "model_bits": 1316.0389501625782,
+            "header_bytes": 160,
+            "payload_bytes": 164
+          },
+          "archive_bytes": 324,
+          "archive_sha256": "c2ad83c8ba39975b4102b79ea3344d5530187149f9b9fedc78373666c9859fef",
+          "payload_sha256": "651a015b2bd21451eb8383599966084a4ead3d314dbd8389807fc857fe0fa2ad",
+          "work_seconds": 4.375505750009324,
+          "forward_seconds": 4.237347336,
+          "forward_positions": 199,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 198,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "9bc9fbe5f8dc899a",
+            "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "vitni-canonical-r2",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 198,
+          "trace_path": "runs/vitni-norwegian_prefix-from-metal-encode.trace.json",
+          "process_seconds": 7.678762333001941,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "vitni",
+            "metal",
+            "fixtures/norwegian_prefix.txt",
+            "runs/vitni-norwegian_prefix-from-metal.llmz",
+            "runs/vitni-norwegian_prefix-from-metal-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 8.013650583015988
+        }
+      },
+      "decodes": [
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "cpu",
+            "input": "runs/vitni-norwegian_prefix-from-cpu.llmz",
+            "output": "runs/vitni-norwegian_prefix-from-cpu-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "c2ad83c8ba39975b4102b79ea3344d5530187149f9b9fedc78373666c9859fef",
+            "load_seconds": 0.1983399169985205,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "cpu",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 520,
+            "recovered_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+            "work_seconds": 12.963972708006622,
+            "forward_seconds": 12.806427197,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 198,
+            "trace_path": "runs/vitni-norwegian_prefix-from-cpu-to-cpu.trace.json",
+            "process_seconds": 16.1789743329864,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "cpu",
+              "runs/vitni-norwegian_prefix-from-cpu.llmz",
+              "runs/vitni-norwegian_prefix-from-cpu-to-cpu.recovered",
+              "runs/vitni-norwegian_prefix-from-cpu-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 16.494927166000707,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "metal",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "metal",
+            "input": "runs/vitni-norwegian_prefix-from-cpu.llmz",
+            "output": "runs/vitni-norwegian_prefix-from-cpu-to-metal.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "c2ad83c8ba39975b4102b79ea3344d5530187149f9b9fedc78373666c9859fef",
+            "load_seconds": 0.20245220899232663,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "metal",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 520,
+            "recovered_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+            "work_seconds": 4.406965666974429,
+            "forward_seconds": 4.258543792000003,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 198,
+            "trace_path": "runs/vitni-norwegian_prefix-from-cpu-to-metal.trace.json",
+            "process_seconds": 7.994017916993471,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "metal",
+              "runs/vitni-norwegian_prefix-from-cpu.llmz",
+              "runs/vitni-norwegian_prefix-from-cpu-to-metal.recovered",
+              "runs/vitni-norwegian_prefix-from-cpu-to-metal.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 8.318100291013252,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "metal",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "cpu",
+            "input": "runs/vitni-norwegian_prefix-from-metal.llmz",
+            "output": "runs/vitni-norwegian_prefix-from-metal-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "c2ad83c8ba39975b4102b79ea3344d5530187149f9b9fedc78373666c9859fef",
+            "load_seconds": 0.148036458005663,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "cpu",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 520,
+            "recovered_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+            "work_seconds": 13.060466958006145,
+            "forward_seconds": 12.898647967999995,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 198,
+            "trace_path": "runs/vitni-norwegian_prefix-from-metal-to-cpu.trace.json",
+            "process_seconds": 16.48683587499545,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "cpu",
+              "runs/vitni-norwegian_prefix-from-metal.llmz",
+              "runs/vitni-norwegian_prefix-from-metal-to-cpu.recovered",
+              "runs/vitni-norwegian_prefix-from-metal-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 16.83633729198482,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "metal",
+          "decoding_device": "metal",
+          "metrics": {
+            "operation": "decode",
+            "provider": "vitni",
+            "device": "metal",
+            "input": "runs/vitni-norwegian_prefix-from-metal.llmz",
+            "output": "runs/vitni-norwegian_prefix-from-metal-to-metal.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "c2ad83c8ba39975b4102b79ea3344d5530187149f9b9fedc78373666c9859fef",
+            "load_seconds": 0.24199112498899922,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "native_ready": {
+              "ready": true,
+              "backend": "metal",
+              "vocab": 49152,
+              "dim": 576,
+              "layers": 30,
+              "context": 256,
+              "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+            },
+            "recovered_bytes": 520,
+            "recovered_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+            "work_seconds": 4.379361749975942,
+            "forward_seconds": 4.238831839,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "vitni-canonical-r2",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 198,
+            "trace_path": "runs/vitni-norwegian_prefix-from-metal-to-metal.trace.json",
+            "process_seconds": 7.781580584007315,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "vitni",
+              "metal",
+              "runs/vitni-norwegian_prefix-from-metal.llmz",
+              "runs/vitni-norwegian_prefix-from-metal-to-metal.recovered",
+              "runs/vitni-norwegian_prefix-from-metal-to-metal.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 8.12078737502452,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        }
+      ],
+      "cpu_gpu_encoding_trace": {
+        "left_rows": 198,
+        "right_rows": 198,
+        "logits_sha256": {
+          "different_rows": 0,
+          "first_difference": null
+        },
+        "cdf_sha256": {
+          "different_rows": 0,
+          "first_difference": null
+        }
+      },
+      "identical_archive": true,
+      "identical_payload": true
+    },
+    {
+      "provider": "hf",
+      "fixture": "prose_full",
+      "input_bytes": 5130,
+      "input_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+      "encodes": {
+        "cpu": {
+          "operation": "encode",
+          "provider": "hf",
+          "device": "cpu",
+          "input": "fixtures/prose_full.txt",
+          "output": "runs/hf-prose_full-from-cpu.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+          "load_seconds": 0.3549108329752926,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 1362,
+            "model_bits": 5339.794079504522,
+            "header_bytes": 82,
+            "payload_bytes": 668
+          },
+          "archive_bytes": 750,
+          "archive_sha256": "832a8219e6570000c191eb87df47ec4e1412b668c84af4508d6f558ff422200b",
+          "payload_sha256": "32b43980c16a086bad69a892790d75d81b38a9bfba698aca13ebfe39f2979325",
+          "work_seconds": 19.05439954099711,
+          "forward_seconds": 18.120719950617058,
+          "forward_positions": 1741,
+          "cache_resets": 7,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 1362,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "082bf9d8fdda1eef",
+            "model_id": "HuggingFaceTB/SmolLM2-135M",
+            "meta": {
+              "dt": "float32",
+              "dev": "cpu",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 1362,
+          "trace_path": "runs/hf-prose_full-from-cpu-encode.trace.json",
+          "process_seconds": 22.662138624989893,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "hf",
+            "cpu",
+            "fixtures/prose_full.txt",
+            "runs/hf-prose_full-from-cpu.llmz",
+            "runs/hf-prose_full-from-cpu-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 23.046767374995397
+        },
+        "mps": {
+          "operation": "encode",
+          "provider": "hf",
+          "device": "mps",
+          "input": "fixtures/prose_full.txt",
+          "output": "runs/hf-prose_full-from-mps.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+          "load_seconds": 0.2812299999932293,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 1362,
+            "model_bits": 5339.794252140797,
+            "header_bytes": 82,
+            "payload_bytes": 668
+          },
+          "archive_bytes": 750,
+          "archive_sha256": "8a8d02f3b6ba63a8d1d0f48d376487838966d02632fdc4a2ed0b8c2eb2cf0916",
+          "payload_sha256": "5940c95c6fc81349377a6db4cbf4bcbb930726c45dd5cfed22538f94d969f0c1",
+          "work_seconds": 16.237074125005165,
+          "forward_seconds": 14.834652942197863,
+          "forward_positions": 1741,
+          "cache_resets": 7,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 1362,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "082bf9d8fdda1eef",
+            "model_id": "HuggingFaceTB/SmolLM2-135M",
+            "meta": {
+              "dt": "float32",
+              "dev": "mps",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 1362,
+          "trace_path": "runs/hf-prose_full-from-mps-encode.trace.json",
+          "process_seconds": 19.825847500003874,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "hf",
+            "mps",
+            "fixtures/prose_full.txt",
+            "runs/hf-prose_full-from-mps.llmz",
+            "runs/hf-prose_full-from-mps-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 20.18396799999755
+        }
+      },
+      "decodes": [
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "cpu",
+            "input": "runs/hf-prose_full-from-cpu.llmz",
+            "output": "runs/hf-prose_full-from-cpu-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "832a8219e6570000c191eb87df47ec4e1412b668c84af4508d6f558ff422200b",
+            "load_seconds": 0.3742281250015367,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "recovered_bytes": 5130,
+            "recovered_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+            "work_seconds": 18.880097750021378,
+            "forward_seconds": 17.95351537471288,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 1362,
+            "trace_path": "runs/hf-prose_full-from-cpu-to-cpu.trace.json",
+            "process_seconds": 22.95238995901309,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "cpu",
+              "runs/hf-prose_full-from-cpu.llmz",
+              "runs/hf-prose_full-from-cpu-to-cpu.recovered",
+              "runs/hf-prose_full-from-cpu-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 23.31077899999218,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "mps",
+            "input": "runs/hf-prose_full-from-cpu.llmz",
+            "output": "runs/hf-prose_full-from-cpu-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "832a8219e6570000c191eb87df47ec4e1412b668c84af4508d6f558ff422200b",
+            "load_seconds": 0.3647762500040699,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "work_seconds": 16.762457041011658,
+            "forward_seconds": 15.346693258092273,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 1362,
+            "trace_path": "runs/hf-prose_full-from-cpu-to-mps.trace.json",
+            "process_seconds": 20.178153709013714,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "mps",
+              "runs/hf-prose_full-from-cpu.llmz",
+              "runs/hf-prose_full-from-cpu-to-mps.recovered",
+              "runs/hf-prose_full-from-cpu-to-mps.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 20.538569000025745,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 1362,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 1362,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "cpu",
+            "input": "runs/hf-prose_full-from-mps.llmz",
+            "output": "runs/hf-prose_full-from-mps-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "8a8d02f3b6ba63a8d1d0f48d376487838966d02632fdc4a2ed0b8c2eb2cf0916",
+            "load_seconds": 0.15907975001027808,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "work_seconds": 19.131891208002344,
+            "forward_seconds": 18.194393721292727,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 1362,
+            "trace_path": "runs/hf-prose_full-from-mps-to-cpu.trace.json",
+            "process_seconds": 23.026454291975824,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "cpu",
+              "runs/hf-prose_full-from-mps.llmz",
+              "runs/hf-prose_full-from-mps-to-cpu.recovered",
+              "runs/hf-prose_full-from-mps-to-cpu.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 23.408224082988454,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 1362,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 1362,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "mps",
+            "input": "runs/hf-prose_full-from-mps.llmz",
+            "output": "runs/hf-prose_full-from-mps-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "8a8d02f3b6ba63a8d1d0f48d376487838966d02632fdc4a2ed0b8c2eb2cf0916",
+            "load_seconds": 0.4480081250076182,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "recovered_bytes": 5130,
+            "recovered_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+            "work_seconds": 16.294639917003224,
+            "forward_seconds": 14.894524455216015,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 1362,
+            "trace_path": "runs/hf-prose_full-from-mps-to-mps.trace.json",
+            "process_seconds": 20.750472334009828,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "mps",
+              "runs/hf-prose_full-from-mps.llmz",
+              "runs/hf-prose_full-from-mps-to-mps.recovered",
+              "runs/hf-prose_full-from-mps-to-mps.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 21.137446791981347,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        }
+      ],
+      "cpu_gpu_encoding_trace": {
+        "left_rows": 1362,
+        "right_rows": 1362,
+        "logits_sha256": {
+          "different_rows": 1362,
+          "first_difference": 0
+        },
+        "cdf_sha256": {
+          "different_rows": 1350,
+          "first_difference": 0
+        }
+      },
+      "identical_archive": false,
+      "identical_payload": false
+    },
+    {
+      "provider": "hf",
+      "fixture": "code_prefix",
+      "input_bytes": 512,
+      "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+      "encodes": {
+        "cpu": {
+          "operation": "encode",
+          "provider": "hf",
+          "device": "cpu",
+          "input": "fixtures/code_prefix.txt",
+          "output": "runs/hf-code_prefix-from-cpu.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+          "load_seconds": 0.15051574999233708,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 129,
+            "model_bits": 360.200188310798,
+            "header_bytes": 82,
+            "payload_bytes": 45
+          },
+          "archive_bytes": 127,
+          "archive_sha256": "c7f7b4488e7452f53faec3766e3b4b5ab4ba3c666c81288810eab048644caa6d",
+          "payload_sha256": "1a9678b1163b313cc49cb383fd107027f65660eba0e34d63365a6d0ffb9f2da0",
+          "work_seconds": 1.681938292022096,
+          "forward_seconds": 1.59260146075394,
+          "forward_positions": 130,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 129,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "acb0d7663ba44624",
+            "model_id": "HuggingFaceTB/SmolLM2-135M",
+            "meta": {
+              "dt": "float32",
+              "dev": "cpu",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 129,
+          "trace_path": "runs/hf-code_prefix-from-cpu-encode.trace.json",
+          "process_seconds": 5.147181125008501,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "hf",
+            "cpu",
+            "fixtures/code_prefix.txt",
+            "runs/hf-code_prefix-from-cpu.llmz",
+            "runs/hf-code_prefix-from-cpu-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 5.464069917012239
+        },
+        "mps": {
+          "operation": "encode",
+          "provider": "hf",
+          "device": "mps",
+          "input": "fixtures/code_prefix.txt",
+          "output": "runs/hf-code_prefix-from-mps.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+          "load_seconds": 0.2626999589847401,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 129,
+            "model_bits": 360.200157176488,
+            "header_bytes": 82,
+            "payload_bytes": 46
+          },
+          "archive_bytes": 128,
+          "archive_sha256": "d1e0ca899d9fbec4ef970fcfcb14714b9531e9d90da0faee57400a50eee83165",
+          "payload_sha256": "6c3f32d60458fdb427ec53544683f1dd77f47480e787b75c62ab2003e97c5aaa",
+          "work_seconds": 1.5925947499927133,
+          "forward_seconds": 1.459630416095024,
+          "forward_positions": 130,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 129,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "acb0d7663ba44624",
+            "model_id": "HuggingFaceTB/SmolLM2-135M",
+            "meta": {
+              "dt": "float32",
+              "dev": "mps",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 129,
+          "trace_path": "runs/hf-code_prefix-from-mps-encode.trace.json",
+          "process_seconds": 5.127188208018197,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "hf",
+            "mps",
+            "fixtures/code_prefix.txt",
+            "runs/hf-code_prefix-from-mps.llmz",
+            "runs/hf-code_prefix-from-mps-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 5.456033958995249
+        }
+      },
+      "decodes": [
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "cpu",
+            "input": "runs/hf-code_prefix-from-cpu.llmz",
+            "output": "runs/hf-code_prefix-from-cpu-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "c7f7b4488e7452f53faec3766e3b4b5ab4ba3c666c81288810eab048644caa6d",
+            "load_seconds": 0.1429937499924563,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "recovered_bytes": 512,
+            "recovered_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+            "work_seconds": 1.6940403749758843,
+            "forward_seconds": 1.604792369849747,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 129,
+            "trace_path": "runs/hf-code_prefix-from-cpu-to-cpu.trace.json",
+            "process_seconds": 5.0413699579949025,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "cpu",
+              "runs/hf-code_prefix-from-cpu.llmz",
+              "runs/hf-code_prefix-from-cpu-to-cpu.recovered",
+              "runs/hf-code_prefix-from-cpu-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 5.35416637500748,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "mps",
+            "input": "runs/hf-code_prefix-from-cpu.llmz",
+            "output": "runs/hf-code_prefix-from-cpu-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "c7f7b4488e7452f53faec3766e3b4b5ab4ba3c666c81288810eab048644caa6d",
+            "load_seconds": 0.26659475002088584,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "work_seconds": 1.6474024589988403,
+            "forward_seconds": 1.4914030460058711,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 129,
+            "trace_path": "runs/hf-code_prefix-from-cpu-to-mps.trace.json",
+            "process_seconds": 5.217413208010839,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "mps",
+              "runs/hf-code_prefix-from-cpu.llmz",
+              "runs/hf-code_prefix-from-cpu-to-mps.recovered",
+              "runs/hf-code_prefix-from-cpu-to-mps.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 5.5587165000033565,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 129,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 129,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "cpu",
+            "input": "runs/hf-code_prefix-from-mps.llmz",
+            "output": "runs/hf-code_prefix-from-mps-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "d1e0ca899d9fbec4ef970fcfcb14714b9531e9d90da0faee57400a50eee83165",
+            "load_seconds": 0.14016991699463688,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "work_seconds": 1.65586287502083,
+            "forward_seconds": 1.5673562149167992,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 129,
+            "trace_path": "runs/hf-code_prefix-from-mps-to-cpu.trace.json",
+            "process_seconds": 4.97098716700566,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "cpu",
+              "runs/hf-code_prefix-from-mps.llmz",
+              "runs/hf-code_prefix-from-mps-to-cpu.recovered",
+              "runs/hf-code_prefix-from-mps-to-cpu.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 5.271462042001076,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 129,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 129,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "mps",
+            "input": "runs/hf-code_prefix-from-mps.llmz",
+            "output": "runs/hf-code_prefix-from-mps-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "d1e0ca899d9fbec4ef970fcfcb14714b9531e9d90da0faee57400a50eee83165",
+            "load_seconds": 0.2627564159920439,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "recovered_bytes": 512,
+            "recovered_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+            "work_seconds": 1.6191821249958593,
+            "forward_seconds": 1.4741397489851806,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 129,
+            "trace_path": "runs/hf-code_prefix-from-mps-to-mps.trace.json",
+            "process_seconds": 5.165654457989149,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "mps",
+              "runs/hf-code_prefix-from-mps.llmz",
+              "runs/hf-code_prefix-from-mps-to-mps.recovered",
+              "runs/hf-code_prefix-from-mps-to-mps.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 5.497162166982889,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        }
+      ],
+      "cpu_gpu_encoding_trace": {
+        "left_rows": 129,
+        "right_rows": 129,
+        "logits_sha256": {
+          "different_rows": 129,
+          "first_difference": 0
+        },
+        "cdf_sha256": {
+          "different_rows": 127,
+          "first_difference": 0
+        }
+      },
+      "identical_archive": false,
+      "identical_payload": false
+    },
+    {
+      "provider": "hf",
+      "fixture": "norwegian_prefix",
+      "input_bytes": 520,
+      "input_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+      "encodes": {
+        "cpu": {
+          "operation": "encode",
+          "provider": "hf",
+          "device": "cpu",
+          "input": "fixtures/norwegian_prefix.txt",
+          "output": "runs/hf-norwegian_prefix-from-cpu.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+          "load_seconds": 0.14014391700038686,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 198,
+            "model_bits": 1313.138495208604,
+            "header_bytes": 82,
+            "payload_bytes": 165
+          },
+          "archive_bytes": 247,
+          "archive_sha256": "ff4c5fdc1455c3196070ac7919800eab2b296295ed00c0c55bd905976f1e1948",
+          "payload_sha256": "7367f0b58dbf97a41d530f67d107971c00ae648eee57e79bf8ec79286013ea24",
+          "work_seconds": 2.6159867079986725,
+          "forward_seconds": 2.479007371730404,
+          "forward_positions": 199,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 198,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "9bc9fbe5f8dc899a",
+            "model_id": "HuggingFaceTB/SmolLM2-135M",
+            "meta": {
+              "dt": "float32",
+              "dev": "cpu",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 198,
+          "trace_path": "runs/hf-norwegian_prefix-from-cpu-encode.trace.json",
+          "process_seconds": 6.021663540974259,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "hf",
+            "cpu",
+            "fixtures/norwegian_prefix.txt",
+            "runs/hf-norwegian_prefix-from-cpu.llmz",
+            "runs/hf-norwegian_prefix-from-cpu-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 6.323227249988122
+        },
+        "mps": {
+          "operation": "encode",
+          "provider": "hf",
+          "device": "mps",
+          "input": "fixtures/norwegian_prefix.txt",
+          "output": "runs/hf-norwegian_prefix-from-mps.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+          "load_seconds": 0.2644629580026958,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 198,
+            "model_bits": 1313.138499134343,
+            "header_bytes": 82,
+            "payload_bytes": 164
+          },
+          "archive_bytes": 246,
+          "archive_sha256": "87967d286ffb49e81b6cf7a139b95db7e8055257394bb9eb565b71f168fa3fc1",
+          "payload_sha256": "2fdd4330940a7369cf87165a752b13facc810f6f4ec9d30ecbeb8b46dca06ea0",
+          "work_seconds": 2.4744618329859804,
+          "forward_seconds": 2.2620227498409804,
+          "forward_positions": 199,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 198,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "9bc9fbe5f8dc899a",
+            "model_id": "HuggingFaceTB/SmolLM2-135M",
+            "meta": {
+              "dt": "float32",
+              "dev": "mps",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 198,
+          "trace_path": "runs/hf-norwegian_prefix-from-mps-encode.trace.json",
+          "process_seconds": 5.980546625010902,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "hf",
+            "mps",
+            "fixtures/norwegian_prefix.txt",
+            "runs/hf-norwegian_prefix-from-mps.llmz",
+            "runs/hf-norwegian_prefix-from-mps-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 6.323593790992163
+        }
+      },
+      "decodes": [
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "cpu",
+            "input": "runs/hf-norwegian_prefix-from-cpu.llmz",
+            "output": "runs/hf-norwegian_prefix-from-cpu-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "ff4c5fdc1455c3196070ac7919800eab2b296295ed00c0c55bd905976f1e1948",
+            "load_seconds": 0.13872250000713393,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "recovered_bytes": 520,
+            "recovered_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+            "work_seconds": 2.579287792003015,
+            "forward_seconds": 2.4444334580621216,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 198,
+            "trace_path": "runs/hf-norwegian_prefix-from-cpu-to-cpu.trace.json",
+            "process_seconds": 5.931912791013019,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "cpu",
+              "runs/hf-norwegian_prefix-from-cpu.llmz",
+              "runs/hf-norwegian_prefix-from-cpu-to-cpu.recovered",
+              "runs/hf-norwegian_prefix-from-cpu-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 6.241088000009768,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "mps",
+            "input": "runs/hf-norwegian_prefix-from-cpu.llmz",
+            "output": "runs/hf-norwegian_prefix-from-cpu-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "ff4c5fdc1455c3196070ac7919800eab2b296295ed00c0c55bd905976f1e1948",
+            "load_seconds": 0.29256104200612754,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "work_seconds": 2.6019378330092877,
+            "forward_seconds": 2.367009656270966,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 198,
+            "trace_path": "runs/hf-norwegian_prefix-from-cpu-to-mps.trace.json",
+            "process_seconds": 6.088281542004552,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "mps",
+              "runs/hf-norwegian_prefix-from-cpu.llmz",
+              "runs/hf-norwegian_prefix-from-cpu-to-mps.recovered",
+              "runs/hf-norwegian_prefix-from-cpu-to-mps.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 6.426801374997012,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 198,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 198,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "cpu",
+            "input": "runs/hf-norwegian_prefix-from-mps.llmz",
+            "output": "runs/hf-norwegian_prefix-from-mps-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "87967d286ffb49e81b6cf7a139b95db7e8055257394bb9eb565b71f168fa3fc1",
+            "load_seconds": 0.14895379199879244,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "work_seconds": 3.3985060830018483,
+            "forward_seconds": 3.2246993370063137,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 198,
+            "trace_path": "runs/hf-norwegian_prefix-from-mps-to-cpu.trace.json",
+            "process_seconds": 7.146430166991195,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "cpu",
+              "runs/hf-norwegian_prefix-from-mps.llmz",
+              "runs/hf-norwegian_prefix-from-mps-to-cpu.recovered",
+              "runs/hf-norwegian_prefix-from-mps-to-cpu.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 7.975500250002369,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 198,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 198,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "hf",
+            "device": "mps",
+            "input": "runs/hf-norwegian_prefix-from-mps.llmz",
+            "output": "runs/hf-norwegian_prefix-from-mps-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "87967d286ffb49e81b6cf7a139b95db7e8055257394bb9eb565b71f168fa3fc1",
+            "load_seconds": 0.3513840420055203,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "HuggingFaceTB/SmolLM2-135M",
+            "recovered_bytes": 520,
+            "recovered_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+            "work_seconds": 3.109316582995234,
+            "forward_seconds": 2.81825637925067,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "HuggingFaceTB/SmolLM2-135M",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 198,
+            "trace_path": "runs/hf-norwegian_prefix-from-mps-to-mps.trace.json",
+            "process_seconds": 6.988889583008131,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "hf",
+              "mps",
+              "runs/hf-norwegian_prefix-from-mps.llmz",
+              "runs/hf-norwegian_prefix-from-mps-to-mps.recovered",
+              "runs/hf-norwegian_prefix-from-mps-to-mps.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 7.5193514580023475,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        }
+      ],
+      "cpu_gpu_encoding_trace": {
+        "left_rows": 198,
+        "right_rows": 198,
+        "logits_sha256": {
+          "different_rows": 198,
+          "first_difference": 0
+        },
+        "cdf_sha256": {
+          "different_rows": 198,
+          "first_difference": 0
+        }
+      },
+      "identical_archive": false,
+      "identical_payload": false
+    },
+    {
+      "provider": "gguf",
+      "fixture": "prose_full",
+      "input_bytes": 5130,
+      "input_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+      "encodes": {
+        "cpu": {
+          "operation": "encode",
+          "provider": "gguf",
+          "device": "cpu",
+          "input": "fixtures/prose_full.txt",
+          "output": "runs/gguf-prose_full-from-cpu.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+          "load_seconds": 6.353212208021432,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 1362,
+            "model_bits": 5340.842673659425,
+            "header_bytes": 136,
+            "payload_bytes": 668
+          },
+          "archive_bytes": 804,
+          "archive_sha256": "ed36e510eb5e71be0ab44b32159e1ed6055d785077df16a1edbedc2ba00e8f76",
+          "payload_sha256": "9d046b366dadd0d4446e00d05298fd658147a3b32932cf276ae6f658e5d9c2f1",
+          "work_seconds": 33.663049791997764,
+          "forward_seconds": 32.09458158601774,
+          "forward_positions": 1741,
+          "cache_resets": 7,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 1362,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "082bf9d8fdda1eef",
+            "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "cpu",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 1362,
+          "trace_path": "runs/gguf-prose_full-from-cpu-encode.trace.json",
+          "process_seconds": 44.33948695799336,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "gguf",
+            "cpu",
+            "fixtures/prose_full.txt",
+            "runs/gguf-prose_full-from-cpu.llmz",
+            "runs/gguf-prose_full-from-cpu-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 45.372147417016095
+        },
+        "mps": {
+          "operation": "encode",
+          "provider": "gguf",
+          "device": "mps",
+          "input": "fixtures/prose_full.txt",
+          "output": "runs/gguf-prose_full-from-mps.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+          "load_seconds": 6.232622332987376,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 1362,
+            "model_bits": 5340.84273162195,
+            "header_bytes": 136,
+            "payload_bytes": 668
+          },
+          "archive_bytes": 804,
+          "archive_sha256": "ae8a0a8d6f2d0a67b27630edbdb8e6ee9169adb952c1ae4a0e102533922e4075",
+          "payload_sha256": "27e9cd18228d849eb968dee02e6c25c6d79e6bf2d017125d5d4ebb4eee071225",
+          "work_seconds": 21.434064000000944,
+          "forward_seconds": 19.27463814613293,
+          "forward_positions": 1741,
+          "cache_resets": 7,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 1362,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "082bf9d8fdda1eef",
+            "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "mps",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 1362,
+          "trace_path": "runs/gguf-prose_full-from-mps-encode.trace.json",
+          "process_seconds": 32.93670595798176,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "gguf",
+            "mps",
+            "fixtures/prose_full.txt",
+            "runs/gguf-prose_full-from-mps.llmz",
+            "runs/gguf-prose_full-from-mps-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 33.49267249999684
+        }
+      },
+      "decodes": [
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "cpu",
+            "input": "runs/gguf-prose_full-from-cpu.llmz",
+            "output": "runs/gguf-prose_full-from-cpu-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "ed36e510eb5e71be0ab44b32159e1ed6055d785077df16a1edbedc2ba00e8f76",
+            "load_seconds": 8.067303333984455,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "recovered_bytes": 5130,
+            "recovered_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+            "work_seconds": 70.1481156249938,
+            "forward_seconds": 67.17965643396019,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 1362,
+            "trace_path": "runs/gguf-prose_full-from-cpu-to-cpu.trace.json",
+            "process_seconds": 83.61407154198969,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "cpu",
+              "runs/gguf-prose_full-from-cpu.llmz",
+              "runs/gguf-prose_full-from-cpu-to-cpu.recovered",
+              "runs/gguf-prose_full-from-cpu-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 85.10772233299213,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "mps",
+            "input": "runs/gguf-prose_full-from-cpu.llmz",
+            "output": "runs/gguf-prose_full-from-cpu-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "ed36e510eb5e71be0ab44b32159e1ed6055d785077df16a1edbedc2ba00e8f76",
+            "load_seconds": 8.092904584016651,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "work_seconds": 31.86702691699611,
+            "forward_seconds": 28.799124325654702,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 1362,
+            "trace_path": "runs/gguf-prose_full-from-cpu-to-mps.trace.json",
+            "process_seconds": 46.10227366600884,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "mps",
+              "runs/gguf-prose_full-from-cpu.llmz",
+              "runs/gguf-prose_full-from-cpu-to-mps.recovered",
+              "runs/gguf-prose_full-from-cpu-to-mps.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 46.69151595898438,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 1362,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 1362,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "cpu",
+            "input": "runs/gguf-prose_full-from-mps.llmz",
+            "output": "runs/gguf-prose_full-from-mps-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "ae8a0a8d6f2d0a67b27630edbdb8e6ee9169adb952c1ae4a0e102533922e4075",
+            "load_seconds": 5.105844584002625,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "work_seconds": 27.02771745901555,
+            "forward_seconds": 25.627478732785676,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 1362,
+            "trace_path": "runs/gguf-prose_full-from-mps-to-cpu.trace.json",
+            "process_seconds": 35.94686508300947,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "cpu",
+              "runs/gguf-prose_full-from-mps.llmz",
+              "runs/gguf-prose_full-from-mps-to-cpu.recovered",
+              "runs/gguf-prose_full-from-mps-to-cpu.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 36.348848041991005,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 1362,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 1362,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "mps",
+            "input": "runs/gguf-prose_full-from-mps.llmz",
+            "output": "runs/gguf-prose_full-from-mps-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "ae8a0a8d6f2d0a67b27630edbdb8e6ee9169adb952c1ae4a0e102533922e4075",
+            "load_seconds": 5.505854375020135,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "recovered_bytes": 5130,
+            "recovered_sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb",
+            "work_seconds": 16.901465333008673,
+            "forward_seconds": 15.245920674031368,
+            "forward_positions": 1741,
+            "cache_resets": 7,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 1362,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "082bf9d8fdda1eef",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 1362,
+            "trace_path": "runs/gguf-prose_full-from-mps-to-mps.trace.json",
+            "process_seconds": 26.369680167001206,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "mps",
+              "runs/gguf-prose_full-from-mps.llmz",
+              "runs/gguf-prose_full-from-mps-to-mps.recovered",
+              "runs/gguf-prose_full-from-mps-to-mps.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 26.917499250004767,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 1362,
+            "right_rows": 1362,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        }
+      ],
+      "cpu_gpu_encoding_trace": {
+        "left_rows": 1362,
+        "right_rows": 1362,
+        "logits_sha256": {
+          "different_rows": 1362,
+          "first_difference": 0
+        },
+        "cdf_sha256": {
+          "different_rows": 1356,
+          "first_difference": 0
+        }
+      },
+      "identical_archive": false,
+      "identical_payload": false
+    },
+    {
+      "provider": "gguf",
+      "fixture": "code_prefix",
+      "input_bytes": 512,
+      "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+      "encodes": {
+        "cpu": {
+          "operation": "encode",
+          "provider": "gguf",
+          "device": "cpu",
+          "input": "fixtures/code_prefix.txt",
+          "output": "runs/gguf-code_prefix-from-cpu.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+          "load_seconds": 5.4965427499846555,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 129,
+            "model_bits": 358.964422369945,
+            "header_bytes": 136,
+            "payload_bytes": 45
+          },
+          "archive_bytes": 181,
+          "archive_sha256": "becbf2a15b999a6126e657502d98b6c5305ce9dddf6425e29eccf0d0e1dd85e4",
+          "payload_sha256": "38d67aef6117977afbd19c1aa8871e2be3ee6bddd4c3cea1ddb1ac44d1b52c20",
+          "work_seconds": 1.7971138750144746,
+          "forward_seconds": 1.6961098701576702,
+          "forward_positions": 130,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 129,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "acb0d7663ba44624",
+            "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "cpu",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 129,
+          "trace_path": "runs/gguf-code_prefix-from-cpu-encode.trace.json",
+          "process_seconds": 10.754089791007573,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "gguf",
+            "cpu",
+            "fixtures/code_prefix.txt",
+            "runs/gguf-code_prefix-from-cpu.llmz",
+            "runs/gguf-code_prefix-from-cpu-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 11.089434875000734
+        },
+        "mps": {
+          "operation": "encode",
+          "provider": "gguf",
+          "device": "mps",
+          "input": "fixtures/code_prefix.txt",
+          "output": "runs/gguf-code_prefix-from-mps.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+          "load_seconds": 5.261692083004164,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 129,
+            "model_bits": 358.9644650510486,
+            "header_bytes": 136,
+            "payload_bytes": 45
+          },
+          "archive_bytes": 181,
+          "archive_sha256": "6e592add0a551ff254201ab4cbb5cbcc6307f7bea402feed85bc69ed0f2c9a95",
+          "payload_sha256": "334204c46aca3d1b64e10b7e4266e0d63c8e032f2514346bfde0c55847ca30ab",
+          "work_seconds": 1.6279017920023762,
+          "forward_seconds": 1.4662634162523318,
+          "forward_positions": 130,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 129,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "acb0d7663ba44624",
+            "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "mps",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 129,
+          "trace_path": "runs/gguf-code_prefix-from-mps-encode.trace.json",
+          "process_seconds": 10.251320040988503,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "gguf",
+            "mps",
+            "fixtures/code_prefix.txt",
+            "runs/gguf-code_prefix-from-mps.llmz",
+            "runs/gguf-code_prefix-from-mps-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 10.578452791989548
+        }
+      },
+      "decodes": [
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "cpu",
+            "input": "runs/gguf-code_prefix-from-cpu.llmz",
+            "output": "runs/gguf-code_prefix-from-cpu-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "becbf2a15b999a6126e657502d98b6c5305ce9dddf6425e29eccf0d0e1dd85e4",
+            "load_seconds": 5.196577749971766,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "recovered_bytes": 512,
+            "recovered_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+            "work_seconds": 1.6551384170015808,
+            "forward_seconds": 1.5666546712454874,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 129,
+            "trace_path": "runs/gguf-code_prefix-from-cpu-to-cpu.trace.json",
+            "process_seconds": 10.426536749990191,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "cpu",
+              "runs/gguf-code_prefix-from-cpu.llmz",
+              "runs/gguf-code_prefix-from-cpu-to-cpu.recovered",
+              "runs/gguf-code_prefix-from-cpu-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 10.74867462500697,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "mps",
+            "input": "runs/gguf-code_prefix-from-cpu.llmz",
+            "output": "runs/gguf-code_prefix-from-cpu-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "becbf2a15b999a6126e657502d98b6c5305ce9dddf6425e29eccf0d0e1dd85e4",
+            "load_seconds": 5.351609999983339,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "work_seconds": 1.651678082998842,
+            "forward_seconds": 1.5023844228708185,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 129,
+            "trace_path": "runs/gguf-code_prefix-from-cpu-to-mps.trace.json",
+            "process_seconds": 10.32219929198618,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "mps",
+              "runs/gguf-code_prefix-from-cpu.llmz",
+              "runs/gguf-code_prefix-from-cpu-to-mps.recovered",
+              "runs/gguf-code_prefix-from-cpu-to-mps.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 10.680600082996534,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 129,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 129,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "cpu",
+            "input": "runs/gguf-code_prefix-from-mps.llmz",
+            "output": "runs/gguf-code_prefix-from-mps-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "6e592add0a551ff254201ab4cbb5cbcc6307f7bea402feed85bc69ed0f2c9a95",
+            "load_seconds": 5.175280166993616,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "work_seconds": 1.7797804590081796,
+            "forward_seconds": 1.6824653783114627,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 129,
+            "trace_path": "runs/gguf-code_prefix-from-mps-to-cpu.trace.json",
+            "process_seconds": 10.294754000002285,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "cpu",
+              "runs/gguf-code_prefix-from-mps.llmz",
+              "runs/gguf-code_prefix-from-mps-to-cpu.recovered",
+              "runs/gguf-code_prefix-from-mps-to-cpu.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 10.724592166981893,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 129,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 129,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "mps",
+            "input": "runs/gguf-code_prefix-from-mps.llmz",
+            "output": "runs/gguf-code_prefix-from-mps-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "6e592add0a551ff254201ab4cbb5cbcc6307f7bea402feed85bc69ed0f2c9a95",
+            "load_seconds": 5.571215249976376,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "recovered_bytes": 512,
+            "recovered_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+            "work_seconds": 1.621757416985929,
+            "forward_seconds": 1.4788495371467434,
+            "forward_positions": 130,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 129,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "acb0d7663ba44624",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 129,
+            "trace_path": "runs/gguf-code_prefix-from-mps-to-mps.trace.json",
+            "process_seconds": 10.589889708004193,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "mps",
+              "runs/gguf-code_prefix-from-mps.llmz",
+              "runs/gguf-code_prefix-from-mps-to-mps.recovered",
+              "runs/gguf-code_prefix-from-mps-to-mps.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 11.049617999990005,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 129,
+            "right_rows": 129,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        }
+      ],
+      "cpu_gpu_encoding_trace": {
+        "left_rows": 129,
+        "right_rows": 129,
+        "logits_sha256": {
+          "different_rows": 129,
+          "first_difference": 0
+        },
+        "cdf_sha256": {
+          "different_rows": 127,
+          "first_difference": 0
+        }
+      },
+      "identical_archive": false,
+      "identical_payload": false
+    },
+    {
+      "provider": "gguf",
+      "fixture": "norwegian_prefix",
+      "input_bytes": 520,
+      "input_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+      "encodes": {
+        "cpu": {
+          "operation": "encode",
+          "provider": "gguf",
+          "device": "cpu",
+          "input": "fixtures/norwegian_prefix.txt",
+          "output": "runs/gguf-norwegian_prefix-from-cpu.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+          "load_seconds": 5.1731497080181725,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 198,
+            "model_bits": 1316.0390092716173,
+            "header_bytes": 136,
+            "payload_bytes": 165
+          },
+          "archive_bytes": 301,
+          "archive_sha256": "ba0f0bfa42571a1ab51098fcea92002b856772af19f85d638f0b00d31caa7458",
+          "payload_sha256": "97ffe36b86964695aeb7c5ff139292d1c4ac196c11ea80902593650be8ba9b61",
+          "work_seconds": 2.6545592919865157,
+          "forward_seconds": 2.5086385898757726,
+          "forward_positions": 199,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 198,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "9bc9fbe5f8dc899a",
+            "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "cpu",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 198,
+          "trace_path": "runs/gguf-norwegian_prefix-from-cpu-encode.trace.json",
+          "process_seconds": 11.395864541991614,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "gguf",
+            "cpu",
+            "fixtures/norwegian_prefix.txt",
+            "runs/gguf-norwegian_prefix-from-cpu.llmz",
+            "runs/gguf-norwegian_prefix-from-cpu-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 11.777477583003929
+        },
+        "mps": {
+          "operation": "encode",
+          "provider": "gguf",
+          "device": "mps",
+          "input": "fixtures/norwegian_prefix.txt",
+          "output": "runs/gguf-norwegian_prefix-from-mps.llmz",
+          "platform": "macOS-27.2.1-arm64-arm-64bit",
+          "torch": "2.14.1",
+          "numpy": "2.5.4",
+          "threads": 10,
+          "success": true,
+          "input_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+          "load_seconds": 5.477341665973654,
+          "window": 256,
+          "keep": 64,
+          "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+          "stats": {
+            "mode": 0,
+            "n_tokens": 198,
+            "model_bits": 1316.0389827615863,
+            "header_bytes": 136,
+            "payload_bytes": 165
+          },
+          "archive_bytes": 301,
+          "archive_sha256": "1e482dcede805fed5caf6f93724975bc26e81c7ca3a93b6abfb70f413a8c693a",
+          "payload_sha256": "24fd84fd5b6a71147638ae5a860962444e6486f575e7f23702692ca2dc0cada5",
+          "work_seconds": 2.6370162919920404,
+          "forward_seconds": 2.4225375039095525,
+          "forward_positions": 199,
+          "cache_resets": 1,
+          "header": {
+            "mode": 0,
+            "prec_bits": 30,
+            "n_tokens": 198,
+            "window": 256,
+            "keep": 64,
+            "temperature": 1.0,
+            "mix_weight": 0.0,
+            "digest": "9bc9fbe5f8dc899a",
+            "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "meta": {
+              "dt": "float32",
+              "dev": "mps",
+              "nt": "10",
+              "pt": "2.14.1",
+              "tf": "5.20.2",
+              "np": "2.5.4"
+            }
+          },
+          "trace_rows": 198,
+          "trace_path": "runs/gguf-norwegian_prefix-from-mps-encode.trace.json",
+          "process_seconds": 11.462359166005626,
+          "command": [
+            "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+            "codec_worker.py",
+            "encode",
+            "gguf",
+            "mps",
+            "fixtures/norwegian_prefix.txt",
+            "runs/gguf-norwegian_prefix-from-mps.llmz",
+            "runs/gguf-norwegian_prefix-from-mps-encode.json"
+          ],
+          "exit_code": 0,
+          "outer_seconds": 11.824578958010534
+        }
+      },
+      "decodes": [
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "cpu",
+            "input": "runs/gguf-norwegian_prefix-from-cpu.llmz",
+            "output": "runs/gguf-norwegian_prefix-from-cpu-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "ba0f0bfa42571a1ab51098fcea92002b856772af19f85d638f0b00d31caa7458",
+            "load_seconds": 5.210877125005936,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "recovered_bytes": 520,
+            "recovered_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+            "work_seconds": 2.5574190840125084,
+            "forward_seconds": 2.4231412952649407,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 198,
+            "trace_path": "runs/gguf-norwegian_prefix-from-cpu-to-cpu.trace.json",
+            "process_seconds": 11.12954120899667,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "cpu",
+              "runs/gguf-norwegian_prefix-from-cpu.llmz",
+              "runs/gguf-norwegian_prefix-from-cpu-to-cpu.recovered",
+              "runs/gguf-norwegian_prefix-from-cpu-to-cpu.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 11.478229750005994,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        },
+        {
+          "encoding_device": "cpu",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "mps",
+            "input": "runs/gguf-norwegian_prefix-from-cpu.llmz",
+            "output": "runs/gguf-norwegian_prefix-from-cpu-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "ba0f0bfa42571a1ab51098fcea92002b856772af19f85d638f0b00d31caa7458",
+            "load_seconds": 5.175666249997448,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "work_seconds": 2.522660459013423,
+            "forward_seconds": 2.253755379060749,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "cpu",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 198,
+            "trace_path": "runs/gguf-norwegian_prefix-from-cpu-to-mps.trace.json",
+            "process_seconds": 10.91750999999931,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "mps",
+              "runs/gguf-norwegian_prefix-from-cpu.llmz",
+              "runs/gguf-norwegian_prefix-from-cpu-to-mps.recovered",
+              "runs/gguf-norwegian_prefix-from-cpu-to-mps.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 11.238743458001409,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 198,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 198,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "cpu",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "cpu",
+            "input": "runs/gguf-norwegian_prefix-from-mps.llmz",
+            "output": "runs/gguf-norwegian_prefix-from-mps-to-cpu.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": false,
+            "input_sha256": "1e482dcede805fed5caf6f93724975bc26e81c7ca3a93b6abfb70f413a8c693a",
+            "load_seconds": 5.118926833005389,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "work_seconds": 2.5655160839960445,
+            "forward_seconds": 2.432134830101859,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "error_type": "ValueError",
+            "error": "INTEGRITY CHECK FAILED -- decompressed text does not match the original digest. This almost always means the model's predictions were not reproduced bit-exactly (different hardware, dtype, device or torch/transformers version than the machine that compressed).",
+            "trace_rows": 198,
+            "trace_path": "runs/gguf-norwegian_prefix-from-mps-to-cpu.trace.json",
+            "process_seconds": 10.891541541001061,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "cpu",
+              "runs/gguf-norwegian_prefix-from-mps.llmz",
+              "runs/gguf-norwegian_prefix-from-mps-to-cpu.recovered",
+              "runs/gguf-norwegian_prefix-from-mps-to-cpu.json"
+            ],
+            "exit_code": 2,
+            "outer_seconds": 11.2114450839872,
+            "parent_exact_recovery": false
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 198,
+              "first_difference": 0
+            },
+            "cdf_sha256": {
+              "different_rows": 198,
+              "first_difference": 0
+            }
+          }
+        },
+        {
+          "encoding_device": "mps",
+          "decoding_device": "mps",
+          "metrics": {
+            "operation": "decode",
+            "provider": "gguf",
+            "device": "mps",
+            "input": "runs/gguf-norwegian_prefix-from-mps.llmz",
+            "output": "runs/gguf-norwegian_prefix-from-mps-to-mps.recovered",
+            "platform": "macOS-27.2.1-arm64-arm-64bit",
+            "torch": "2.14.1",
+            "numpy": "2.5.4",
+            "threads": 10,
+            "success": true,
+            "input_sha256": "1e482dcede805fed5caf6f93724975bc26e81c7ca3a93b6abfb70f413a8c693a",
+            "load_seconds": 5.232137874991167,
+            "window": 256,
+            "keep": 64,
+            "numerical_profile": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+            "recovered_bytes": 520,
+            "recovered_sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599",
+            "work_seconds": 2.407196666987147,
+            "forward_seconds": 2.1961706189613324,
+            "forward_positions": 199,
+            "cache_resets": 1,
+            "header": {
+              "mode": 0,
+              "prec_bits": 30,
+              "n_tokens": 198,
+              "window": 256,
+              "keep": 64,
+              "temperature": 1.0,
+              "mix_weight": 0.0,
+              "digest": "9bc9fbe5f8dc899a",
+              "model_id": "gguf-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+              "meta": {
+                "dt": "float32",
+                "dev": "mps",
+                "nt": "10",
+                "pt": "2.14.1",
+                "tf": "5.20.2",
+                "np": "2.5.4"
+              }
+            },
+            "trace_rows": 198,
+            "trace_path": "runs/gguf-norwegian_prefix-from-mps-to-mps.trace.json",
+            "process_seconds": 10.85100116598187,
+            "command": [
+              "<original-workspace>/work/vitni-subtext-gonka-venv/bin/python",
+              "codec_worker.py",
+              "decode",
+              "gguf",
+              "mps",
+              "runs/gguf-norwegian_prefix-from-mps.llmz",
+              "runs/gguf-norwegian_prefix-from-mps-to-mps.recovered",
+              "runs/gguf-norwegian_prefix-from-mps-to-mps.json"
+            ],
+            "exit_code": 0,
+            "outer_seconds": 11.184907040995313,
+            "parent_exact_recovery": true
+          },
+          "encoder_decoder_trace": {
+            "left_rows": 198,
+            "right_rows": 198,
+            "logits_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            },
+            "cdf_sha256": {
+              "different_rows": 0,
+              "first_difference": null
+            }
+          }
+        }
+      ],
+      "cpu_gpu_encoding_trace": {
+        "left_rows": 198,
+        "right_rows": 198,
+        "logits_sha256": {
+          "different_rows": 198,
+          "first_difference": 0
+        },
+        "cdf_sha256": {
+          "different_rows": 198,
+          "first_difference": 0
+        }
+      },
+      "identical_archive": false,
+      "identical_payload": false
+    }
+  ],
+  "completed_runs": 54
+}

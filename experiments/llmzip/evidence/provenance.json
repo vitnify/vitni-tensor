@@ -1,0 +1,39 @@
+{
+  "source_commit": "6e6cd1bccfa99584b8f112957c5a74f3f29b17a1",
+  "engine_commit": "b43ba153c391364c224ef364adc8a6f84c9d1a17",
+  "research_prefill_enabled": false,
+  "files": {
+    "adapters.py": {
+      "bytes": 6288,
+      "sha256": "1329dfcb9e0c8db98f5c3145d3327a76caec36ef39f1c0948847b374d130d7fc"
+    },
+    "codec_worker.py": {
+      "bytes": 5322,
+      "sha256": "30c175fd00df86ea5298492c16a1d736f654177a0d0ff74b063487dc55d9b558"
+    },
+    "run_matrix.py": {
+      "bytes": 3668,
+      "sha256": "0239bf906847e4f42a51b989d7ee6a31b38e3cf22f2ef06f6de5eb336740f889"
+    },
+    "native/Cargo.toml": {
+      "bytes": 270,
+      "sha256": "df7fdad3c61cb1edd0a07d69e5acb79d08f14f09c3612220b58bd96a027afd19"
+    },
+    "native/Cargo.lock": {
+      "bytes": 6613,
+      "sha256": "e6680c30f6a32a5fa7ed68b6118b8338ac4b5f512e988145e727c66388f7e915"
+    },
+    "native/src/main.rs": {
+      "bytes": 2997,
+      "sha256": "61c1ebe9b527ae2118713d8f0024f8d2e857b4ab22ef0c485b441d24557fd78b"
+    },
+    "native-target/release/vitni-workload-predictor": {
+      "bytes": 764816,
+      "sha256": "61137f5e77137cfa8162413c7856716d42bd5bf968fc1bdfb030859a5e604f67"
+    },
+    "source/andreasviner-llm-compression-6e6cd1b/llmzip.py": {
+      "bytes": 52749,
+      "sha256": "e22dc92b8ed459c057805fa34cbc26facc9bd897440c6ae986c55c9a2f32f42d"
+    }
+  }
+}

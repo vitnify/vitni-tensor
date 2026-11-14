@@ -1,0 +1,44 @@
+{
+  "date": "2026-11-14",
+  "developer": "Andreas Lindeman",
+  "source": "https://github.com/andreasviner/llm-compression",
+  "commit": "6e6cd1bccfa99584b8f112957c5a74f3f29b17a1",
+  "need_source": "https://andreaslindeman.com/projects/llm-compression/",
+  "evidence": "Author explicitly describes cross-hardware bit-exact decoding requirement; predictor deliberately avoids batched teacher forcing. Public statement is evidence of technical need, not confirmed interest in Vitni. Last public source commit August 16, 2026.",
+  "engine": "unchanged v0.3.3 numerical sources; current research-prefill feature disabled",
+  "providers": [
+    "original HF SmolLM2-135M FP32",
+    "native PyTorch using same Q8 GGUF weights dequantized to FP32",
+    "Vitni same Q8 GGUF on CPU/Metal"
+  ],
+  "window": 256,
+  "keep": 64,
+  "coding": "unchanged arithmetic coder, original float64 DistributionModel/probability-to-integer-CDF, PREC_BITS=30, temperature=1, no mixing",
+  "fixtures": [
+    {
+      "name": "prose_full",
+      "source": "examples/prose_en.txt",
+      "selection": "entire file",
+      "bytes": 5130,
+      "sha256": "082bf9d8fdda1eef51d9a4a5d0805baba9167b7ec10cf8e76c9fe0dd2b8b14fb"
+    },
+    {
+      "name": "code_prefix",
+      "source": "examples/code_python.txt",
+      "selection": "first 512 Unicode characters",
+      "bytes": 512,
+      "sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1"
+    },
+    {
+      "name": "norwegian_prefix",
+      "source": "examples/prose_no.txt",
+      "selection": "first 512 Unicode characters",
+      "bytes": 520,
+      "sha256": "9bc9fbe5f8dc899a75fb957e9801a749e11114e3ee28287c0dd28de63fa29599"
+    }
+  ],
+  "matrix": "For each provider/fixture, independently encode CPU and GPU; fresh-process decode each archive on CPU and GPU. Require same-backend controls. No raw LZMA fallback, saved-logit replay, artificial rounding, substituted coder or supplied plaintext to decoders.",
+  "success": "Vitni recovers exact original bytes across CPU/Metal; report original and same-GGUF control failures honestly, every CDF/logit trace, archive size and complete runtime. New numerical profile requires re-encoding; no old archive compatibility claim.",
+  "adoption_gate": "Independent owner usefulness/cost acceptance is separate and remains unconfirmed; prepare a concrete reproducible result before requesting any outreach permission.",
+  "scope": "No engine changes, main changes, paid compute, public posting or contacting others in this task."
+}

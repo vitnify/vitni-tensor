@@ -1,0 +1,17 @@
+{
+  "code_prefix": {
+    "raw_bytes": 512,
+    "gzip9_bytes": 242,
+    "lzma9e_bytes": 304
+  },
+  "norwegian_prefix": {
+    "raw_bytes": 520,
+    "gzip9_bytes": 329,
+    "lzma9e_bytes": 412
+  },
+  "prose_full": {
+    "raw_bytes": 5130,
+    "gzip9_bytes": 2385,
+    "lzma9e_bytes": 2448
+  }
+}

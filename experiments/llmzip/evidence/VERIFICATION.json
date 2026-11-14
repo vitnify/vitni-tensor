@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "encodes": 18,
+  "same_device_passes": 18,
+  "cross_device_passes": {
+    "vitni": 6
+  },
+  "cross_device_failures": {
+    "hf": 6,
+    "gguf": 6
+  },
+  "vitni_coded_positions": 1689,
+  "vitni_compared_vocabulary_words": 83017728
+}

@@ -1,0 +1,7 @@
+{
+  "head": "b43ba153c391364c224ef364adc8a6f84c9d1a17",
+  "branch": "research/metal-batched-prefill-2026-11-13",
+  "status": "",
+  "release_v033_commit": "854a392ec81fc80c763d44efda2b45752853b559",
+  "rustc": "rustc 1.95.0-nightly (873b4beb0 2026-02-15)"
+}

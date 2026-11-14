@@ -1,0 +1,10 @@
+[package]
+name = "vitni-workload-predictor"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[dependencies]
+vitni-tensor = { path = "../../.." }
+vitni-tensor-metal = { path = "../../../metal" }
+objc = "0.2"
+blake3 = "1"

@@ -1,0 +1,184 @@
+{
+  "success": true,
+  "input_bytes": 512,
+  "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+  "archive_bytes": 205,
+  "identical_archives": true,
+  "encodes": {
+    "cpu": {
+      "operation": "encode",
+      "provider": "vitni",
+      "device": "cpu",
+      "input": "fixtures/code_prefix.txt",
+      "output": "runs-quick/trial-i3t7pe4x/from-cpu.llmz",
+      "platform": "macOS-27.2.1-arm64-arm-64bit",
+      "torch": "2.14.1",
+      "numpy": "2.5.4",
+      "threads": 10,
+      "success": true,
+      "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+      "load_seconds": 0.2545051670167595,
+      "window": 256,
+      "keep": 64,
+      "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+      "native_ready": {
+        "ready": true,
+        "backend": "cpu",
+        "vocab": 49152,
+        "dim": 576,
+        "layers": 30,
+        "context": 256,
+        "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+      },
+      "stats": {
+        "mode": 0,
+        "n_tokens": 129,
+        "model_bits": 358.96436628122376,
+        "header_bytes": 160,
+        "payload_bytes": 45
+      },
+      "archive_bytes": 205,
+      "archive_sha256": "41bbbfc50081c340d6fd87d35548665fc1a846fa2a901037f5e76eeced88a543",
+      "payload_sha256": "7d7d6f356e4fbc14eb25fd1cc740de41eb410f7c5a3e00968890e3f4769efdf5",
+      "work_seconds": 8.38502712501213,
+      "forward_seconds": 8.280182367000002,
+      "forward_positions": 130,
+      "cache_resets": 1,
+      "header": {
+        "mode": 0,
+        "prec_bits": 30,
+        "n_tokens": 129,
+        "window": 256,
+        "keep": 64,
+        "temperature": 1.0,
+        "mix_weight": 0.0,
+        "digest": "acb0d7663ba44624",
+        "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+        "meta": {
+          "dt": "float32",
+          "dev": "vitni-canonical-r2",
+          "nt": "10",
+          "pt": "2.14.1",
+          "tf": "5.20.2",
+          "np": "2.5.4"
+        }
+      },
+      "trace_rows": 129,
+      "trace_path": "runs-quick/trial-i3t7pe4x/from-cpu-encode.trace.json",
+      "process_seconds": 24.266568582999753,
+      "command": [
+        "<reproducer-root>/.venv-llmzip/bin/python",
+        "codec_worker.py",
+        "encode",
+        "vitni",
+        "cpu",
+        "fixtures/code_prefix.txt",
+        "runs-quick/trial-i3t7pe4x/from-cpu.llmz",
+        "runs-quick/trial-i3t7pe4x/from-cpu-encode.json"
+      ],
+      "exit_code": 0,
+      "outer_seconds": 24.595491749991197
+    },
+    "metal": {
+      "operation": "encode",
+      "provider": "vitni",
+      "device": "metal",
+      "input": "fixtures/code_prefix.txt",
+      "output": "runs-quick/trial-i3t7pe4x/from-metal.llmz",
+      "platform": "macOS-27.2.1-arm64-arm-64bit",
+      "torch": "2.14.1",
+      "numpy": "2.5.4",
+      "threads": 10,
+      "success": true,
+      "input_sha256": "acb0d7663ba44624dc730b52db6b42c6749454110a469b146112cd47c56359d1",
+      "load_seconds": 0.1981459160160739,
+      "window": 256,
+      "keep": 64,
+      "numerical_profile": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+      "native_ready": {
+        "ready": true,
+        "backend": "metal",
+        "vocab": 49152,
+        "dim": 576,
+        "layers": 30,
+        "context": 256,
+        "weights_blake3": "2bdfb0683447526fa87219632baf67a0436d72bf66b8098110ec401ae140959a"
+      },
+      "stats": {
+        "mode": 0,
+        "n_tokens": 129,
+        "model_bits": 358.96436628122376,
+        "header_bytes": 160,
+        "payload_bytes": 45
+      },
+      "archive_bytes": 205,
+      "archive_sha256": "41bbbfc50081c340d6fd87d35548665fc1a846fa2a901037f5e76eeced88a543",
+      "payload_sha256": "7d7d6f356e4fbc14eb25fd1cc740de41eb410f7c5a3e00968890e3f4769efdf5",
+      "work_seconds": 2.8719557499862276,
+      "forward_seconds": 2.7616282439999993,
+      "forward_positions": 130,
+      "cache_resets": 1,
+      "header": {
+        "mode": 0,
+        "prec_bits": 30,
+        "n_tokens": 129,
+        "window": 256,
+        "keep": 64,
+        "temperature": 1.0,
+        "mix_weight": 0.0,
+        "digest": "acb0d7663ba44624",
+        "model_id": "vitni-v033-r2-smol135-q8:813966e2b5e5aba261f6f198849a13b815db3c77bf4e389e72aa1e0f35a0d455",
+        "meta": {
+          "dt": "float32",
+          "dev": "vitni-canonical-r2",
+          "nt": "10",
+          "pt": "2.14.1",
+          "tf": "5.20.2",
+          "np": "2.5.4"
+        }
+      },
+      "trace_rows": 129,
+      "trace_path": "runs-quick/trial-i3t7pe4x/from-metal-encode.trace.json",
+      "process_seconds": 6.660255125025287,
+      "command": [
+        "<reproducer-root>/.venv-llmzip/bin/python",
+        "codec_worker.py",
+        "encode",
+        "vitni",
+        "metal",
+        "fixtures/code_prefix.txt",
+        "runs-quick/trial-i3t7pe4x/from-metal.llmz",
+        "runs-quick/trial-i3t7pe4x/from-metal-encode.json"
+      ],
+      "exit_code": 0,
+      "outer_seconds": 6.979118291987106
+    }
+  },
+  "decodes": [
+    {
+      "encoder": "cpu",
+      "decoder": "cpu",
+      "exact": true,
+      "work_seconds": 8.362306208000518
+    },
+    {
+      "encoder": "cpu",
+      "decoder": "metal",
+      "exact": true,
+      "work_seconds": 2.836774916999275
+    },
+    {
+      "encoder": "metal",
+      "decoder": "cpu",
+      "exact": true,
+      "work_seconds": 8.433107124990784
+    },
+    {
+      "encoder": "metal",
+      "decoder": "metal",
+      "exact": true,
+      "work_seconds": 2.8639211670088116
+    }
+  ],
+  "scope": "one Mac CPU/Metal pairing; pinned experimental numerical profile"
+}

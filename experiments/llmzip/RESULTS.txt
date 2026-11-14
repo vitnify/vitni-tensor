@@ -1,0 +1,164 @@
+Vitni value on an independent developer's actual workload
+Completed November 14, 2026
+
+Finding
+
+Andreas Lindeman's llmzip has a documented need for bit-exact model replay:
+device-dependent predictions can desynchronize its arithmetic decoder. The
+current Vitni engine removes that failure on the tested Mac CPU/Metal pair.
+This is functional value on an independent workload, demonstrated by actual
+file recovery. Andreas has not tried or endorsed this integration. His current
+interest in adopting it remains unconfirmed.
+
+Independent sources
+
+Owner's explanation: https://andreaslindeman.com/projects/llm-compression/
+Source: https://github.com/andreasviner/llm-compression
+Pinned commit: 6e6cd1bccfa99584b8f112957c5a74f3f29b17a1 (August 16, 2026).
+This is an individual hobby project. Its published comparisons already use
+SmolLM2-135M; that existing model family is what this test uses. The original
+default GPT-2 backend was not tested. At measurement time, no external messages
+or posts had been made about this independent workload.
+
+Experiment
+
+54 fresh-process runs: 18 encodes and 36 decodes. Three fixed upstream inputs:
+the complete 5,130-byte English prose file, a 512-byte Python-code prefix and
+a 520-byte Norwegian prefix. All original arithmetic coding, CDF construction,
+tokenization, header framing and integrity checks remain unchanged. Raw LZMA
+fallback is explicitly rejected. All files used arithmetic mode.
+
+Each backend independently encoded on CPU and GPU. Every archive was decoded
+on both devices in fresh processes. Decoder input was archive plus model;
+plaintext and reference logits/tables were not supplied. After decoder exit,
+the parent compared recovered bytes with the original file.
+
+Backend                                      Same-device       Cross-device
+                                             exact recovery    exact recovery
+Original HF model, ordinary PyTorch FP32       6 / 6             0 / 6
+Identical Q8 GGUF weights, ordinary PyTorch    6 / 6             0 / 6
+Identical Q8 GGUF weights, Vitni CPU/Metal     6 / 6             6 / 6
+
+All 12 ordinary-backend cross-device decodes failed the original integrity
+check. Their same-device controls passed. Vitni passed both CPU-to-Metal and
+Metal-to-CPU recovery for every input. It independently produced byte-identical
+CPU/Metal archives for all three inputs, including headers and payloads.
+
+Every Vitni coded position had matching full-logit and full-CDF hashes across
+devices and successful decoders: 1,689 distinct coded positions, each with
+49,152 float32 vocabulary words (83,017,728 words across the three inputs).
+The complete prose input crossed six context rebuilds (seven initializations),
+so the result covers context-window continuation as well as short decoding.
+
+The same-weight PyTorch control matters: the portability benefit survives when
+model quantization is held constant. It cannot be attributed solely to using
+the Q8 model instead of the original HF weights.
+
+Compression size — complete archives, bytes
+
+Input               Raw     Native HF CPU/GPU   Same-Q8 CPU/GPU   Vitni CPU/GPU
+English prose       5130    750 / 750           804 / 804         828 / 828
+Python prefix        512    127 / 128           181 / 181         205 / 205
+Norwegian prefix     520    247 / 246           301 / 301         324 / 324
+
+For full prose, every backend produced a 668-byte arithmetic payload. These
+payloads have equal lengths, not equal contents. Complete archive sizes differ
+because experimental profiles carry longer identifiers and device metadata.
+Vitni's 160-byte header includes the GGUF SHA256 in the numerical profile.
+The extra complete-archive cost is 78 bytes versus native HF and 24 bytes versus
+the same-Q8 control for this file.
+
+For context only, gzip -9 produced 2,385 bytes and LZMA -9e 2,448 bytes on this
+5,130-byte file. This is a small-file comparison, not a compression record.
+The model is additional: the Q8 GGUF alone is 144,810,560 bytes, plus tokenizer
+and runtime. Both endpoints need it. The archive-size comparison assumes a
+pre-existing shared model; it is not a one-file total storage/transfer saving.
+
+Observed time — full 5,130-byte prose, seconds
+
+Backend              Encode CPU   Encode GPU   Decode CPU*   Decode GPU*
+Native HF PyTorch      19.05        16.24        18.88         16.29
+Same-Q8 PyTorch        33.66        21.43        70.15         16.90
+Vitni                115.88        38.09       115.61         38.12
+
+*Decode columns use the successful same-device control. Cross-device failure
+timings are retained separately in runs/*.json, rather than used as a useful
+decode-performance baseline. Successful Vitni CPU-to-Metal decode took 38.10
+seconds and Metal-to-CPU decode took 114.55 seconds.
+
+For this observed encode, Vitni GPU work was 2.35x the original native HF GPU
+time and 1.78x the same-Q8 GPU time. Vitni CPU was 6.08x original HF CPU time.
+These are single-run observations on a desktop that remained in use. The large
+variation in the same-Q8 CPU runs illustrates why these are preliminary costs,
+not controlled speed ratios or confidence intervals.
+
+Work timings include inference, CDF construction, coding, tokenization, output
+and identical tracing instrumentation. They exclude imports, model loading,
+download and compilation. Actual fresh-process GPU encode elapsed times,
+including imports/loading/teardown, were 20.18 seconds native HF, 33.49 seconds
+same-Q8 Torch and 42.45 seconds Vitni. Raw measurements retain all components.
+
+The original CLI normally verifies a compression by decoding it before writing
+the archive. Encode-only times above do not include that second computation.
+Adding the measured same-device GPU decode gives about 76.21 seconds of Vitni
+work versus 32.53 seconds for original HF and 38.34 seconds for same-Q8 Torch.
+Those sums describe model/coding work; they are not separately timed CLI runs.
+
+Additional checks
+
+- Original upstream coder/CDF/header selftests: all pass.
+- Saved-evidence verification: passes for all 54 runs, including direct byte
+  comparisons, mode/precision checks and every expected same-device control.
+- Wrong model/numerical profile: rejected before inference, no output file.
+- Corrupted stored digest: rejected after full decoding, no output file.
+- Upstream llmzip.py still matches Git blob
+  70813265196c70bf1dee5c3793aa586181de9810.
+- Vitni engine checkout is clean and unchanged at
+  b43ba153c391364c224ef364adc8a6f84c9d1a17 on the existing research branch.
+  Default-feature arithmetic matches v0.3.3; research-prefill is disabled.
+- No changes to main, engine features, deployment or public repositories.
+
+Limits that affect adoption
+
+This tests one physical Apple M3 Max CPU/30-core GPU pairing, on one Mac, with
+one pinned model and software stack. It does not prove x86, CUDA, AMD, other
+machines, other library versions or permanent archive stability. The original
+CDF conversion still uses CPU NumPy float64 math; its behavior across different
+NumPy/libm builds is unvalidated even when Vitni logits match.
+
+Window=256, keep=64 were fixed for all backends. These are existing upstream
+options, but the upstream default window=1024 was not tested. They affect both
+compression ratio and runtime. The full file is 5 KB; long-corpus scalability
+and large-model performance are unvalidated.
+
+This is an experimental new numerical profile using Q8 weights. Existing HF
+archives require their original prediction profile; replacing their decoder
+with Vitni does not make them portable. New Vitni archives must be re-encoded.
+The experiment-specific adapter is provided on this Vitni research branch; it
+is not a default integration in either project.
+
+Adoption conclusion
+
+The technical problem is independently documented and reproduced. Existing
+Vitni code demonstrably removes it on the tested pairing, while retaining the
+same 668-byte full-prose payload length. There is enough concrete evidence to
+ask this owner whether device portability is worth the measured cost.
+
+Owner replication and cost acceptance are the next adoption gate. Public hobby
+project evidence and our tests do not establish an active adopter, willingness
+to pay, market size or unique novelty. Further engine features are unnecessary
+to obtain that feedback.
+
+Evidence and reproduction
+
+METHOD.txt: full preserved-code protocol, model hashes, software and limitations.
+PLAN.json: fixtures and success criteria frozen before archive results.
+TRIAL.txt: commands for a fresh decoder and matrix reproduction in this workspace.
+evidence/original-measurements.json: sanitized measurements and trace comparisons.
+evidence/VERIFICATION.json / verify.py: original checks and rerun verifier.
+evidence/original-traces.json.gz: all 54 per-position logit/CDF hash sequences.
+evidence/negative-controls.json: profile/digest rejection controls and errors.
+evidence/provenance.json / evidence/engine-state.json / evidence/build-features.txt: provenance.
+evidence/classical-sizes.json: small-file standard-compression context.
+README.md: runnable public research-branch instructions. Historical TRIAL.txt
+referred to the local original workspace and is superseded by this README.
